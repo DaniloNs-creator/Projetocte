@@ -3,578 +3,263 @@ import os
 import shutil
 import zipfile
 import time
-import traceback
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
-from webdriver_manager.chrome import ChromeDriverManager
 
-# ─────────────────────────────────────────────
-# CONFIGURAÇÃO DA PÁGINA
-# ─────────────────────────────────────────────
-st.set_page_config(
-    page_title="MasterSAF — Automação XML",
-    page_icon="⚡",
-    layout="wide",
-    initial_sidebar_state="expanded",
-)
+# ==========================================
+# CONFIGURAÇÃO GERAL DA PÁGINA
+# ==========================================
+st.set_page_config(page_title="MasterSAF Automator", page_icon="⚡", layout="wide", initial_sidebar_state="expanded")
 
-# ─────────────────────────────────────────────
-# CSS GLOBAL  (industrial / utilitarian dark)
-# ─────────────────────────────────────────────
+# ==========================================
+# CSS AVANÇADO (UI/UX)
+# ==========================================
 st.markdown("""
-<style>
-@import url('https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,500;0,9..40,700;1,9..40,300&display=swap');
+    <style>
+        /* Oculta elementos nativos do Streamlit para visual de App independente */
+        #MainMenu {visibility: hidden;}
+        header {visibility: hidden;}
+        footer {visibility: hidden;}
+        
+        /* Fundo principal e tipografia */
+        .stApp {
+            background-color: #f4f7f6;
+            font-family: 'Inter', 'Segoe UI', sans-serif;
+        }
+        
+        /* Cabeçalho principal com gradiente */
+        .hero-header {
+            background: linear-gradient(135deg, #0f2027, #203a43, #2c5364);
+            color: white;
+            padding: 2rem;
+            border-radius: 12px;
+            box-shadow: 0 8px 16px rgba(0,0,0,0.1);
+            margin-bottom: 2rem;
+            text-align: left;
+        }
+        .hero-header h1 {
+            margin: 0;
+            font-size: 2.5rem;
+            font-weight: 700;
+            letter-spacing: -0.5px;
+        }
+        .hero-header p {
+            margin: 8px 0 0 0;
+            font-size: 1.1rem;
+            color: #e0e0e0;
+        }
 
-/* ── Reset & base ── */
-html, body, [data-testid="stAppViewContainer"] {
-    background: #0a0c10 !important;
-    color: #d4dbe8 !important;
-    font-family: 'DM Sans', sans-serif !important;
-}
+        /* Estilo dos Cards de Métrica nativos do Streamlit */
+        div[data-testid="metric-container"] {
+            background-color: #ffffff;
+            border: 1px solid #e0e0e0;
+            padding: 15px;
+            border-radius: 10px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.05);
+        }
 
-/* ── Sidebar ── */
-[data-testid="stSidebar"] {
-    background: #0e1117 !important;
-    border-right: 1px solid #1e2535 !important;
-}
-[data-testid="stSidebar"] * { color: #c4ccd8 !important; }
-
-/* ── Header hero ── */
-.hero {
-    padding: 2.5rem 0 1.5rem;
-    border-bottom: 1px solid #1e2535;
-    margin-bottom: 2rem;
-}
-.hero-tag {
-    font-family: 'Space Mono', monospace;
-    font-size: 0.7rem;
-    letter-spacing: 0.2em;
-    color: #00e5a0;
-    text-transform: uppercase;
-    margin-bottom: 0.5rem;
-}
-.hero-title {
-    font-family: 'Space Mono', monospace;
-    font-size: 2.1rem;
-    font-weight: 700;
-    color: #eef2ff;
-    line-height: 1.15;
-    margin: 0;
-}
-.hero-title span { color: #00e5a0; }
-.hero-subtitle {
-    font-size: 0.95rem;
-    color: #6b7a99;
-    margin-top: 0.5rem;
-    font-weight: 300;
-}
-
-/* ── Metric cards ── */
-.metrics-row {
-    display: grid;
-    grid-template-columns: repeat(4, 1fr);
-    gap: 1rem;
-    margin-bottom: 2rem;
-}
-.metric-card {
-    background: #0e1117;
-    border: 1px solid #1e2535;
-    border-radius: 8px;
-    padding: 1.2rem 1.4rem;
-    position: relative;
-    overflow: hidden;
-}
-.metric-card::before {
-    content: '';
-    position: absolute;
-    top: 0; left: 0; right: 0;
-    height: 2px;
-    background: linear-gradient(90deg, #00e5a0, #0070f3);
-}
-.metric-label {
-    font-family: 'Space Mono', monospace;
-    font-size: 0.65rem;
-    letter-spacing: 0.15em;
-    color: #4a5568;
-    text-transform: uppercase;
-    margin-bottom: 0.4rem;
-}
-.metric-value {
-    font-family: 'Space Mono', monospace;
-    font-size: 1.8rem;
-    font-weight: 700;
-    color: #eef2ff;
-    line-height: 1;
-}
-.metric-value.green { color: #00e5a0; }
-.metric-value.blue  { color: #0070f3; }
-.metric-value.amber { color: #f5a623; }
-
-/* ── Log terminal ── */
-.log-box {
-    background: #070910;
-    border: 1px solid #1e2535;
-    border-radius: 8px;
-    padding: 1.2rem 1.4rem;
-    font-family: 'Space Mono', monospace;
-    font-size: 0.78rem;
-    color: #7dafff;
-    max-height: 340px;
-    overflow-y: auto;
-    line-height: 1.7;
-}
-.log-box .ts  { color: #2d3a52; }
-.log-box .ok  { color: #00e5a0; }
-.log-box .err { color: #ff5c5c; }
-.log-box .inf { color: #7dafff; }
-.log-box .wrn { color: #f5a623; }
-
-/* ── Progress bar override ── */
-[data-testid="stProgress"] > div > div {
-    background: linear-gradient(90deg, #00e5a0, #0070f3) !important;
-    border-radius: 4px !important;
-}
-[data-testid="stProgress"] > div {
-    background: #1e2535 !important;
-    border-radius: 4px !important;
-    height: 6px !important;
-}
-
-/* ── Sidebar inputs ── */
-[data-testid="stTextInput"] input,
-[data-testid="stNumberInput"] input {
-    background: #070910 !important;
-    border: 1px solid #1e2535 !important;
-    border-radius: 6px !important;
-    color: #d4dbe8 !important;
-    font-family: 'Space Mono', monospace !important;
-    font-size: 0.82rem !important;
-}
-[data-testid="stTextInput"] input:focus,
-[data-testid="stNumberInput"] input:focus {
-    border-color: #00e5a0 !important;
-    box-shadow: 0 0 0 2px rgba(0,229,160,0.15) !important;
-}
-
-/* ── Sidebar labels ── */
-[data-testid="stSidebar"] label {
-    font-family: 'Space Mono', monospace !important;
-    font-size: 0.72rem !important;
-    letter-spacing: 0.1em !important;
-    text-transform: uppercase !important;
-    color: #4a5568 !important;
-}
-
-/* ── Button ── */
-[data-testid="stSidebar"] .stButton button {
-    background: linear-gradient(135deg, #00e5a0, #0070f3) !important;
-    color: #020408 !important;
-    font-family: 'Space Mono', monospace !important;
-    font-weight: 700 !important;
-    font-size: 0.82rem !important;
-    letter-spacing: 0.08em !important;
-    border: none !important;
-    border-radius: 6px !important;
-    padding: 0.75rem 1.5rem !important;
-    width: 100% !important;
-    transition: opacity 0.2s !important;
-}
-[data-testid="stSidebar"] .stButton button:hover { opacity: 0.85 !important; }
-
-/* ── Download button ── */
-.stDownloadButton button {
-    background: #0e1117 !important;
-    color: #00e5a0 !important;
-    border: 1px solid #00e5a0 !important;
-    font-family: 'Space Mono', monospace !important;
-    font-size: 0.8rem !important;
-    border-radius: 6px !important;
-    padding: 0.65rem 1.4rem !important;
-    transition: all 0.2s !important;
-}
-.stDownloadButton button:hover {
-    background: #00e5a0 !important;
-    color: #020408 !important;
-}
-
-/* ── Alert boxes ── */
-[data-testid="stAlert"] {
-    background: #0e1117 !important;
-    border-radius: 8px !important;
-    border-left: 3px solid !important;
-    font-family: 'Space Mono', monospace !important;
-    font-size: 0.8rem !important;
-}
-
-/* ── Section label ── */
-.section-label {
-    font-family: 'Space Mono', monospace;
-    font-size: 0.65rem;
-    letter-spacing: 0.2em;
-    color: #4a5568;
-    text-transform: uppercase;
-    margin-bottom: 0.8rem;
-    margin-top: 1.8rem;
-    border-bottom: 1px solid #1e2535;
-    padding-bottom: 0.4rem;
-}
-
-/* ── Sidebar logo ── */
-.sidebar-logo {
-    font-family: 'Space Mono', monospace;
-    font-size: 0.95rem;
-    font-weight: 700;
-    color: #eef2ff;
-    letter-spacing: 0.05em;
-    padding: 1.2rem 0 1.5rem;
-    border-bottom: 1px solid #1e2535;
-    margin-bottom: 1.2rem;
-}
-.sidebar-logo span { color: #00e5a0; }
-
-/* ── Status badge ── */
-.badge {
-    display: inline-block;
-    padding: 0.2rem 0.7rem;
-    border-radius: 100px;
-    font-family: 'Space Mono', monospace;
-    font-size: 0.65rem;
-    font-weight: 700;
-    letter-spacing: 0.1em;
-    text-transform: uppercase;
-    margin-left: 0.8rem;
-    vertical-align: middle;
-}
-.badge-idle    { background: #1e2535; color: #4a5568; }
-.badge-running { background: rgba(0,229,160,0.15); color: #00e5a0; }
-.badge-done    { background: rgba(0,112,243,0.15); color: #0070f3; }
-.badge-error   { background: rgba(255,92,92,0.15); color: #ff5c5c; }
-</style>
+        /* Botão de Ação Principal */
+        .stButton>button {
+            background-color: #0066cc;
+            color: white;
+            font-weight: 600;
+            font-size: 1.1rem;
+            padding: 0.75rem 0;
+            border-radius: 8px;
+            border: none;
+            transition: 0.3s;
+        }
+        .stButton>button:hover {
+            background-color: #004c99;
+            box-shadow: 0 6px 15px rgba(0, 102, 204, 0.4);
+            transform: translateY(-2px);
+            color: white;
+        }
+        
+        /* Estilo da Sidebar */
+        [data-testid="stSidebar"] {
+            background-color: #ffffff;
+            border-right: 1px solid #eaeaea;
+        }
+    </style>
 """, unsafe_allow_html=True)
 
-# ─────────────────────────────────────────────
-# ESTADO DA SESSÃO
-# ─────────────────────────────────────────────
-if "logs"          not in st.session_state: st.session_state.logs          = []
-if "pages_done"    not in st.session_state: st.session_state.pages_done    = 0
-if "files_dl"      not in st.session_state: st.session_state.files_dl      = 0
-if "errors"        not in st.session_state: st.session_state.errors        = 0
-if "status"        not in st.session_state: st.session_state.status        = "idle"   # idle | running | done | error
-if "zip_ready"     not in st.session_state: st.session_state.zip_ready     = False
-
-def add_log(msg: str, kind: str = "inf"):
-    ts = time.strftime("%H:%M:%S")
-    st.session_state.logs.append((ts, kind, msg))
-
-# ─────────────────────────────────────────────
-# SIDEBAR
-# ─────────────────────────────────────────────
+# ==========================================
+# BARRA LATERAL (CREDENCIAIS OCULTAS)
+# ==========================================
 with st.sidebar:
-    st.markdown('<div class="sidebar-logo">MASTER<span>SAF</span> //</div>', unsafe_allow_html=True)
+    st.image("https://cdn-icons-png.flaticon.com/512/2830/2830305.png", width=60) # Ícone decorativo genérico
+    st.markdown("## 🔐 Autenticação")
+    st.markdown("Insira seus dados do MasterSAF.")
+    usuario = st.text_input("Usuário", placeholder="Digite seu login")
+    senha = st.text_input("Senha", type="password", placeholder="Digite sua senha")
+    
+    st.markdown("---")
+    st.markdown("<small>Desenvolvido para extração de alto volume (Até 1000 páginas).</small>", unsafe_allow_html=True)
 
-    st.markdown('<div class="section-label">Credenciais</div>', unsafe_allow_html=True)
-    usuario   = st.text_input("Usuário", placeholder="login@empresa.com.br")
-    senha     = st.text_input("Senha", type="password", placeholder="••••••••")
-
-    st.markdown('<div class="section-label">Período</div>', unsafe_allow_html=True)
-    data_ini  = st.text_input("Data Inicial", value="08/05/2026")
-    data_fin  = st.text_input("Data Final",   value="08/05/2026")
-
-    st.markdown('<div class="section-label">Parâmetros</div>', unsafe_allow_html=True)
-    qtd_loops = st.number_input("Qtd. Páginas (Loops)", min_value=1, max_value=1000, value=5)
-
-    st.markdown("<br>", unsafe_allow_html=True)
-    iniciar   = st.button("⚡ Iniciar Automação")
-
-# ─────────────────────────────────────────────
-# HERO
-# ─────────────────────────────────────────────
-badge_html = {
-    "idle":    '<span class="badge badge-idle">Aguardando</span>',
-    "running": '<span class="badge badge-running">● Executando</span>',
-    "done":    '<span class="badge badge-done">Concluído</span>',
-    "error":   '<span class="badge badge-error">Erro</span>',
-}[st.session_state.status]
-
-st.markdown(f"""
-<div class="hero">
-    <div class="hero-tag">⚡ Sistema de Automação Fiscal</div>
-    <h1 class="hero-title">Master<span>SAF</span> Downloads XML {badge_html}</h1>
-    <p class="hero-subtitle">Captura automatizada de CT-e em massa — suporte a até 1 000 páginas por sessão</p>
-</div>
+# ==========================================
+# PAINEL CENTRAL (UI PRINCIPAL)
+# ==========================================
+# Cabeçalho customizado
+st.markdown("""
+    <div class="hero-header">
+        <h1>⚡ Portal MasterSAF - Automação</h1>
+        <p>Motor de Extração de Arquivos XML de CT-e em Massa</p>
+    </div>
 """, unsafe_allow_html=True)
 
-# ─────────────────────────────────────────────
-# METRIC CARDS
-# ─────────────────────────────────────────────
-elapsed_str = "—"
-pct         = 0 if qtd_loops == 0 else round(st.session_state.pages_done / qtd_loops * 100)
+# Container de Configurações
+st.markdown("### ⚙️ Parâmetros da Extração")
+with st.container():
+    # Usando 3 colunas para um layout responsivo lado a lado
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        data_ini = st.text_input("📅 Data Inicial", value="08/05/2026")
+    with col2:
+        data_fin = st.text_input("📅 Data Final", value="08/05/2026")
+    with col3:
+        qtd_loops = st.number_input("🔁 Páginas (Loops)", min_value=1, max_value=1000, value=5)
 
-st.markdown(f"""
-<div class="metrics-row">
-    <div class="metric-card">
-        <div class="metric-label">Páginas Processadas</div>
-        <div class="metric-value green">{st.session_state.pages_done}</div>
-    </div>
-    <div class="metric-card">
-        <div class="metric-label">Total Programado</div>
-        <div class="metric-value">{qtd_loops}</div>
-    </div>
-    <div class="metric-card">
-        <div class="metric-label">Arquivos Baixados</div>
-        <div class="metric-value blue">{st.session_state.files_dl}</div>
-    </div>
-    <div class="metric-card">
-        <div class="metric-label">Erros Recuperados</div>
-        <div class="metric-value amber">{st.session_state.errors}</div>
-    </div>
-</div>
-""", unsafe_allow_html=True)
+st.markdown("<br>", unsafe_allow_html=True) # Espaçamento
 
-# ─────────────────────────────────────────────
-# PROGRESS + LOG
-# ─────────────────────────────────────────────
-st.markdown('<div class="section-label">Progresso</div>', unsafe_allow_html=True)
-progress_bar = st.progress(pct / 100)
-
-st.markdown('<div class="section-label">Log em tempo real</div>', unsafe_allow_html=True)
-log_placeholder = st.empty()
-
-def render_log():
-    lines = ""
-    for ts, kind, msg in st.session_state.logs[-120:]:   # últimas 120 linhas
-        lines += f'<span class="ts">[{ts}]</span> <span class="{kind}">{msg}</span><br>'
-    log_placeholder.markdown(f'<div class="log-box">{lines or "<span class=ts>// sem eventos ainda</span>"}</div>', unsafe_allow_html=True)
-
-render_log()
-
-# ─────────────────────────────────────────────
-# DRIVER  (idêntico ao original, só com wait)
-# ─────────────────────────────────────────────
+# ==========================================
+# FUNÇÃO DO DRIVER (LÓGICA INTACTA)
+# ==========================================
 def get_driver(download_path):
     chrome_options = Options()
     chrome_options.add_argument("--headless=new")
-    chrome_options.add_argument("--no-sandbox")
-    chrome_options.add_argument("--disable-dev-shm-usage")
-    chrome_options.add_argument("--disable-gpu")
     chrome_options.add_argument("--window-size=1920x1080")
+    chrome_options.add_argument("--no-sandbox")
+    chrome_options.add_argument("--disable-dev-shm-usage") 
+    chrome_options.add_argument("--disable-gpu")
+    chrome_options.add_argument("--disable-software-rasterizer")
+    chrome_options.add_argument("--disable-extensions")
+    chrome_options.add_argument("--disable-infobars")
+    chrome_options.add_argument("--js-flags=--expose-gc") 
+    
     prefs = {
         "download.default_directory": download_path,
         "download.prompt_for_download": False,
         "directory_upgrade": True,
+        "safebrowsing.enabled": False 
     }
     chrome_options.add_experimental_option("prefs", prefs)
-    chrome_options.binary_location = "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe"
-    return webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=chrome_options)
+    chrome_options.binary_location = "/usr/bin/chromium"
+    return webdriver.Chrome(service=Service("/usr/bin/chromedriver"), options=chrome_options)
 
-
-# ─────────────────────────────────────────────
-# FUNÇÃO AUXILIAR: aguarda download terminar
-# (sem alterar lógica — apenas evita timeout)
-# ─────────────────────────────────────────────
-def wait_for_downloads(path: str, timeout: int = 120):
-    """Bloqueia até que não haja arquivos .crdownload / .tmp na pasta."""
-    deadline = time.time() + timeout
-    while time.time() < deadline:
-        pending = [f for f in os.listdir(path)
-                   if f.endswith((".crdownload", ".tmp", ".part"))]
-        if not pending:
-            return True
-        time.sleep(1)
-    return False  # timeout
-
-
-# ─────────────────────────────────────────────
-# AUTOMAÇÃO PRINCIPAL
-# ─────────────────────────────────────────────
-if iniciar:
+# ==========================================
+# EXECUÇÃO E DASHBOARD DINÂMICO
+# ==========================================
+if st.button("🚀 INICIAR PROCESSAMENTO", use_container_width=True):
     if not usuario or not senha:
-        st.error("Preencha usuário e senha antes de iniciar.")
+        st.error("⚠️ Erro: As credenciais na barra lateral estão vazias. Preencha Usuário e Senha.")
     else:
-        # Reset estado
-        st.session_state.logs       = []
-        st.session_state.pages_done = 0
-        st.session_state.files_dl   = 0
-        st.session_state.errors     = 0
-        st.session_state.status     = "running"
-        st.session_state.zip_ready  = False
+        # Criação dos "Slots" vazios na tela para atualizar dinamicamente
+        st.markdown("---")
+        st.markdown("### 📊 Status da Operação")
+        
+        # Linha de Métricas
+        metrica_col1, metrica_col2 = st.columns(2)
+        card_paginas = metrica_col1.empty()
+        card_status = metrica_col2.empty()
+        
+        # Barra de Progresso
+        progress_bar = st.progress(0)
+        
+        # Log detalhado
+        log_box = st.empty()
 
+        # Configuração inicial do Dashboard
+        card_paginas.metric(label="Páginas Concluídas", value=f"0 / {int(qtd_loops)}")
+        card_status.metric(label="Status Atual", value="Preparando ambiente...")
+        
+        # Pastas
         dl_path = "/tmp/downloads"
-        if os.path.exists(dl_path):
-            shutil.rmtree(dl_path)
+        if os.path.exists(dl_path): shutil.rmtree(dl_path)
         os.makedirs(dl_path)
-
-        add_log("Sessão iniciada — preparando ambiente", "ok")
-        render_log()
-
-        driver = None
+        
         try:
-            add_log("Inicializando navegador headless...", "inf")
-            render_log()
             driver = get_driver(dl_path)
-            wait  = WebDriverWait(driver, 30)   # espera explícita global
-
-            # ── Login ────────────────────────────────────────────────────
-            add_log("Acessando portal MasterSAF...", "inf")
-            render_log()
+            
+            # Login
+            log_box.info("Acessando o sistema MasterSAF e realizando autenticação...")
+            card_status.metric(label="Status Atual", value="Autenticando...")
             driver.get("https://p.dfe.mastersaf.com.br/mvc/login")
             driver.find_element(By.XPATH, '//*[@id="nomeusuario"]').send_keys(usuario)
             driver.find_element(By.XPATH, '//*[@id="senha"]').send_keys(senha)
-            driver.execute_script(
-                "arguments[0].click();",
-                driver.find_element(By.XPATH, '//*[@id="enter"]')
-            )
+            driver.execute_script("arguments[0].click();", driver.find_element(By.XPATH, '//*[@id="enter"]'))
             time.sleep(4)
-            add_log("Login efetuado.", "ok")
-
-            # ── Navegação ────────────────────────────────────────────────
-            add_log("Acessando listagem de CT-e...", "inf")
-            render_log()
-            driver.execute_script(
-                "arguments[0].click();",
-                driver.find_element(By.XPATH, '//*[@id="linkListagemReceptorCTEs"]/a')
-            )
+            
+            # Navegação
+            log_box.info("Navegando até o módulo de CT-es...")
+            driver.execute_script("arguments[0].click();", driver.find_element(By.XPATH, '//*[@id="linkListagemReceptorCTEs"]/a'))
             time.sleep(3)
-
-            # ── Datas ────────────────────────────────────────────────────
-            for xpath, val in [
-                ('//*[@id="consultaDataInicial"]', data_ini),
-                ('//*[@id="consultaDataFinal"]',   data_fin),
-            ]:
+            
+            # Datas
+            card_status.metric(label="Status Atual", value="Aplicando Filtros...")
+            for xpath, val in [('//*[@id="consultaDataInicial"]', data_ini), ('//*[@id="consultaDataFinal"]', data_fin)]:
                 el = driver.find_element(By.XPATH, xpath)
                 el.send_keys(Keys.CONTROL, 'a', Keys.BACKSPACE)
                 el.send_keys(val)
-
-            driver.execute_script(
-                "arguments[0].click();",
-                driver.find_element(By.XPATH, '//*[@id="listagem_atualiza"]')
-            )
+            
+            log_box.info("Atualizando base de dados com as datas informadas...")
+            driver.execute_script("arguments[0].click();", driver.find_element(By.XPATH, '//*[@id="listagem_atualiza"]'))
             time.sleep(3)
-
-            # ── Visualização ─────────────────────────────────────────────
-            driver.find_element(
-                By.XPATH,
-                '//*[@id="plistagem_center"]/table/tbody/tr/td[8]/select/option[5]'
-            ).click()
+            
+            # Seleção de visualização
+            driver.find_element(By.XPATH, '//*[@id="plistagem_center"]/table/tbody/tr/td[8]/select/option[5]').click()
             time.sleep(3)
-            add_log(f"Filtros aplicados. Período: {data_ini} → {data_fin}", "ok")
-            render_log()
-
-            # ── Loop de downloads ────────────────────────────────────────
+            
+            # Loop de Downloads
+            card_status.metric(label="Status Atual", value="Extraindo Arquivos", delta="Executando")
             for i in range(int(qtd_loops)):
-                page_num = i + 1
-                add_log(f"Processando página {page_num}/{qtd_loops}...", "inf")
+                # Atualiza as métricas e logs em tempo real
+                card_paginas.metric(label="Páginas Concluídas", value=f"{i+1} / {int(qtd_loops)}")
+                log_box.info(f"⏳ Processando e extraindo página {i+1} de {int(qtd_loops)}...")
+                
+                driver.execute_script("arguments[0].click();", driver.find_element(By.XPATH, '//*[@id="jqgh_listagem_checkBox"]/div/input'))
+                driver.execute_script("arguments[0].click();", driver.find_element(By.XPATH, '//*[@id="xml_multiplos"]/h3'))
+                driver.execute_script("arguments[0].click();", driver.find_element(By.XPATH, '//*[@id="downloadEmMassaXml"]'))
+                
+                time.sleep(8) 
+                
+                driver.execute_script("arguments[0].click();", driver.find_element(By.XPATH, '//*[@id="jqgh_listagem_checkBox"]/div/input'))
+                driver.execute_script("arguments[0].click();", driver.find_element(By.XPATH, '//*[@id="next_plistagem"]/span'))
+                
+                progress_bar.progress((i + 1) / int(qtd_loops))
+                time.sleep(4)
 
-                try:
-                    # Selecionar todos
-                    driver.execute_script(
-                        "arguments[0].click();",
-                        driver.find_element(By.XPATH, '//*[@id="jqgh_listagem_checkBox"]/div/input')
-                    )
-                    # Abrir painel XML múltiplos
-                    driver.execute_script(
-                        "arguments[0].click();",
-                        driver.find_element(By.XPATH, '//*[@id="xml_multiplos"]/h3')
-                    )
-                    # Disparar download
-                    driver.execute_script(
-                        "arguments[0].click();",
-                        driver.find_element(By.XPATH, '//*[@id="downloadEmMassaXml"]')
-                    )
-
-                    # Aguarda download com timeout generoso (evita queda em 1000 pág)
-                    downloaded = wait_for_downloads(dl_path, timeout=120)
-                    if not downloaded:
-                        add_log(f"Página {page_num}: timeout de download — continuando.", "wrn")
-                        st.session_state.errors += 1
-                    else:
-                        n_files = len([
-                            f for f in os.listdir(dl_path)
-                            if os.path.isfile(os.path.join(dl_path, f))
-                        ])
-                        st.session_state.files_dl = n_files
-                        add_log(f"Página {page_num} OK — {n_files} arquivo(s) acumulados.", "ok")
-
-                    # Desmarcar e avançar página
-                    driver.execute_script(
-                        "arguments[0].click();",
-                        driver.find_element(By.XPATH, '//*[@id="jqgh_listagem_checkBox"]/div/input')
-                    )
-                    driver.execute_script(
-                        "arguments[0].click();",
-                        driver.find_element(By.XPATH, '//*[@id="next_plistagem"]/span')
-                    )
-                    time.sleep(4)
-
-                except Exception as page_err:
-                    st.session_state.errors += 1
-                    add_log(f"Página {page_num} erro: {page_err} — continuando.", "err")
-                    # Tenta recuperar: recarrega estado sem derrubar tudo
-                    try:
-                        driver.execute_script(
-                            "arguments[0].click();",
-                            driver.find_element(By.XPATH, '//*[@id="next_plistagem"]/span')
-                        )
-                        time.sleep(4)
-                    except Exception:
-                        pass
-
-                st.session_state.pages_done = page_num
-                pct_now = page_num / int(qtd_loops)
-                progress_bar.progress(pct_now)
-                render_log()
-
-            # ── Compactar ────────────────────────────────────────────────
-            add_log("Download concluído. Compactando arquivos ZIP...", "inf")
-            render_log()
+            # Compactar
+            card_status.metric(label="Status Atual", value="Compactando Arquivos", delta="Finalizando", delta_color="normal")
+            log_box.info("📦 Criando arquivo ZIP...")
             zip_filename = "/tmp/resultado.zip"
-            with zipfile.ZipFile(zip_filename, 'w', zipfile.ZIP_DEFLATED) as zipf:
+            with zipfile.ZipFile(zip_filename, 'w') as zipf:
                 for root, _, files in os.walk(dl_path):
                     for file in files:
                         zipf.write(os.path.join(root, file), file)
-
-            total_zipped = len(zipf.namelist()) if hasattr(zipf, 'namelist') else "?"
-            add_log(f"ZIP criado: {zip_filename}", "ok")
-            add_log(f"Total de páginas: {int(qtd_loops)} | Erros recuperados: {st.session_state.errors}", "ok")
-            st.session_state.status    = "done"
-            st.session_state.zip_ready = True
-            render_log()
-
+            
+            # Finalização Visual
+            card_status.metric(label="Status Atual", value="Concluído! ✅", delta="Pronto")
+            log_box.success("🎉 Processamento finalizado com sucesso! Seu arquivo está pronto para download abaixo.")
+            
+            st.markdown("<br>", unsafe_allow_html=True)
+            
+            # Botão de download
+            with open(zip_filename, "rb") as f:
+                st.download_button(
+                    label="📥 DOWNLOAD DOS ARQUIVOS (ZIP)", 
+                    data=f, 
+                    file_name="XMLs_MasterSaf.zip", 
+                    mime="application/zip",
+                    use_container_width=True
+                )
+            
             driver.quit()
-
+            
         except Exception as e:
-            st.session_state.status = "error"
-            st.session_state.errors += 1
-            add_log(f"ERRO CRÍTICO: {e}", "err")
-            add_log(traceback.format_exc(), "err")
-            render_log()
-            if driver:
-                try: driver.quit()
-                except Exception: pass
-
-# ─────────────────────────────────────────────
-# RESULTADO / DOWNLOAD
-# ─────────────────────────────────────────────
-if st.session_state.zip_ready and os.path.exists("/tmp/resultado.zip"):
-    st.markdown('<div class="section-label">Resultado</div>', unsafe_allow_html=True)
-    st.success(
-        f"✅ Automação finalizada com sucesso! "
-        f"{st.session_state.pages_done} página(s) processadas, "
-        f"{st.session_state.files_dl} arquivo(s) baixados, "
-        f"{st.session_state.errors} erro(s) recuperado(s)."
-    )
-    with open("/tmp/resultado.zip", "rb") as f:
-        st.download_button(
-            label="📥 Baixar XMLs (ZIP)",
-            data=f,
-            file_name="XMLs_MasterSaf.zip",
-            mime="application/zip",
-        )
-
-if st.session_state.status == "error":
-    st.error("A automação encontrou um erro crítico. Verifique o log acima.")
+            card_status.metric(label="Status Atual", value="Falha Crítica ❌", delta="Erro", delta_color="inverse")
+            log_box.error(f"Ocorreu um erro técnico: {e}")
+            if 'driver' in locals(): driver.quit()
