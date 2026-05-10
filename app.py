@@ -1,5 +1,6 @@
 import streamlit as st
 import os
+import shutil  # <-- Adicionado aqui para corrigir o erro
 import zipfile
 import time
 from selenium import webdriver
@@ -48,7 +49,8 @@ if st.sidebar.button("🚀 Iniciar Automação"):
     else:
         # Preparar pastas
         dl_path = "/tmp/downloads"
-        if os.path.exists(dl_path): shutil.rmtree(dl_path)
+        if os.path.exists(dl_path): 
+            shutil.rmtree(dl_path)
         os.makedirs(dl_path)
         
         status_text = st.empty()
