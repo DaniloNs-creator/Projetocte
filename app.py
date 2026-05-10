@@ -1,257 +1,174 @@
-"""
-app.py — Interface principal do app Streamlit para download de CTEs.
-Executa o Selenium em background (thread separada) e exibe animação
-de progresso. Ao finalizar, habilita o botão de download do ZIP.
-"""
-
 import streamlit as st
-import threading
+from selenium import webdriver
+from selenium.webdriver.common.by import By
+from selenium.webdriver.common.keys import Keys
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.chrome.service import Service
 import time
-import zipfile
+import tempfile
+import shutil
 import os
-from io import BytesIO
-from downloader import executar_download  # lógica de scraping isolada
 
-# ── Configuração da página ──────────────────────────────────────────────────
-st.set_page_config(
-    page_title="CTE Downloader",
-    page_icon="📦",
-    layout="centered",
-)
+# Configuração da página Streamlit
+st.set_page_config(page_title="Automação MasterSAF", page_icon="🤖")
 
-# ── CSS customizado ─────────────────────────────────────────────────────────
-st.markdown("""
-<style>
-@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&family=Syne:wght@700;800&display=swap');
+st.title("Robô de Download de XMLs - MasterSAF")
 
-html, body, [class*="css"] {
-    font-family: 'JetBrains Mono', monospace;
-    background-color: #0d0f1a;
-    color: #e2e8f0;
-}
+# Inputs do usuário na interface
+col1, col2 = st.columns(2)
+with col1:
+    data_inicio = st.date_input("Data Inicial", format="DD/MM/YYYY")
+with col2:
+    data_fim = st.date_input("Data Final", format="DD/MM/YYYY")
 
-/* Título */
-.titulo {
-    font-family: 'Syne', sans-serif;
-    font-size: 2.4rem;
-    font-weight: 800;
-    letter-spacing: -1px;
-    background: linear-gradient(135deg, #38bdf8 0%, #818cf8 100%);
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
-    margin-bottom: 0.2rem;
-}
-.subtitulo {
-    color: #64748b;
-    font-size: 0.85rem;
-    margin-bottom: 2rem;
-}
+def executar_automacao(dt_ini_str, dt_fim_str):
+    # 1. Cria uma pasta temporária segura no servidor para armazenar os downloads
+    temp_download_dir = tempfile.mkdtemp()
 
-/* Card de status */
-.status-card {
-    background: #1e2235;
-    border: 1px solid #2d3555;
-    border-radius: 12px;
-    padding: 1.5rem 2rem;
-    margin-bottom: 1.5rem;
-}
+    # 2. Configurações do Chrome (Essencial para rodar no Streamlit Cloud)
+    chrome_options = Options()
+    chrome_options.add_argument("--headless") # Roda sem abrir a janela visual
+    chrome_options.add_argument("--no-sandbox") # Necessário para rodar no Linux container
+    chrome_options.add_argument("--disable-dev-shm-usage") # Evita travamentos por falta de memória
+    chrome_options.add_argument("--window-size=1920,1080") # Garante que os elementos estarão visíveis na tela virtual
+    
+    # Preferências para baixar arquivos automaticamente na pasta temporária, sem pedir confirmação
+    prefs = {
+        "download.default_directory": temp_download_dir,
+        "download.prompt_for_download": False,
+        "download.directory_upgrade": True,
+        "plugins.always_open_pdf_externally": True
+    }
+    chrome_options.add_experimental_option("prefs", prefs)
 
-/* Barra de progresso customizada */
-.progress-track {
-    background: #0d0f1a;
-    border-radius: 99px;
-    height: 8px;
-    overflow: hidden;
-    margin: 0.8rem 0;
-}
-.progress-bar {
-    height: 100%;
-    border-radius: 99px;
-    background: linear-gradient(90deg, #38bdf8, #818cf8);
-    transition: width 0.4s ease;
-}
+    # Inicia o WebDriver
+    driver = webdriver.Chrome(options=chrome_options)
+    wait = WebDriverWait(driver, 20)
 
-/* Spinner de descarga */
-@keyframes bounce {
-    0%, 100% { transform: translateY(0); }
-    50%       { transform: translateY(-8px); }
-}
-.box-row {
-    display: flex;
-    gap: 8px;
-    margin: 1rem 0;
-}
-.box {
-    width: 22px; height: 22px;
-    background: #38bdf8;
-    border-radius: 4px;
-    animation: bounce 0.8s ease-in-out infinite;
-}
-.box:nth-child(2) { animation-delay: 0.1s; background: #60a5fa; }
-.box:nth-child(3) { animation-delay: 0.2s; background: #818cf8; }
-.box:nth-child(4) { animation-delay: 0.3s; background: #a78bfa; }
-.box:nth-child(5) { animation-delay: 0.4s; background: #c084fc; }
+    try:
+        # Acessa as credenciais seguras configuradas no secrets.toml
+        usuario = st.secrets["mastersaf"]["username"]
+        senha = st.secrets["mastersaf"]["password"]
 
-/* Badge de log */
-.log-line {
-    font-size: 0.78rem;
-    color: #94a3b8;
-    padding: 2px 0;
-    border-left: 2px solid #2d3555;
-    padding-left: 8px;
-    margin: 2px 0;
-}
-.log-line.ok  { color: #4ade80; border-color: #4ade80; }
-.log-line.err { color: #f87171; border-color: #f87171; }
-</style>
-""", unsafe_allow_html=True)
+        # --- Login ---
+        driver.get("https://p.dfe.mastersaf.com.br/mvc/login")
+        user = wait.until(EC.element_to_be_clickable((By.XPATH, '//*[@id="nomeusuario"]')))
+        user.send_keys(usuario)
+        
+        pwd = driver.find_element(By.XPATH, '//*[@id="senha"]')
+        pwd.send_keys(senha)
+        pwd.send_keys(Keys.ENTER)
+        
+        time.sleep(5)
 
-# ── Cabeçalho ───────────────────────────────────────────────────────────────
-st.markdown('<div class="titulo">📦 CTE Downloader</div>', unsafe_allow_html=True)
-st.markdown('<div class="subtitulo">Automação de download de XMLs — MasterSAF DFE</div>', unsafe_allow_html=True)
+        # --- Navegação para Receptor CTEs ---
+        receptor = wait.until(EC.element_to_be_clickable((By.XPATH, '//*[@id="linkListagemReceptorCTEs"]/a')))
+        receptor.click()
+        
+        time.sleep(5)
 
-# ── Estado de sessão (persiste entre re-renders) ─────────────────────────────
-# Usamos st.session_state para guardar progresso, logs e arquivos baixados.
-for key, default in {
-    "rodando": False,
-    "concluido": False,
-    "progresso": 0,          # 0–100
-    "total_ciclos": 0,
-    "ciclo_atual": 0,
-    "logs": [],
-    "arquivos_zip": None,    # bytes do ZIP final
-    "erro": None,
-}.items():
-    if key not in st.session_state:
-        st.session_state[key] = default
+        # --- Filtro de Datas ---
+        input_dt_ini = wait.until(EC.element_to_be_clickable((By.XPATH, '//*[@id="consultaDataInicial"]')))
+        input_dt_ini.click()
+        input_dt_ini.send_keys(Keys.CONTROL + "a") # Seleciona tudo para sobrescrever
+        input_dt_ini.send_keys(dt_ini_str) # Envia a data formatada
 
-# ── Formulário de parâmetros ─────────────────────────────────────────────────
-with st.expander("⚙️ Parâmetros de busca", expanded=not st.session_state["rodando"]):
-    col1, col2 = st.columns(2)
-    with col1:
-        dt_ini = st.text_input("Data inicial (DDMMAAAA)", value="01092025",
-                               help="Formato: dia-mês-ano sem separadores")
-    with col2:
-        dt_fim = st.text_input("Data final (DDMMAAAA)", value="31012026")
-
-    num_ciclos = st.slider("Número de páginas (ciclos)", min_value=1, max_value=100, value=65)
-    itens_pag  = st.selectbox("Itens por página", [50, 100, 200], index=2)
-
-# ── Callbacks de progresso (chamados pela thread do Selenium) ─────────────────
-def cb_progresso(ciclo: int, total: int, mensagem: str, nivel: str = "info"):
-    """Atualiza o estado de sessão; o Streamlit re-renderiza automaticamente."""
-    st.session_state["ciclo_atual"] = ciclo
-    st.session_state["total_ciclos"] = total
-    st.session_state["progresso"]    = int((ciclo / total) * 100) if total else 0
-    entrada = {"msg": mensagem, "nivel": nivel}
-    st.session_state["logs"].append(entrada)
-
-def cb_finalizado(caminho_zip: str | None, erro: str | None):
-    """Chamado ao término — com sucesso ou falha."""
-    st.session_state["rodando"]   = False
-    st.session_state["concluido"] = True
-    st.session_state["erro"]      = erro
-
-    if caminho_zip and os.path.exists(caminho_zip):
-        with open(caminho_zip, "rb") as f:
-            st.session_state["arquivos_zip"] = f.read()
-
-# ── Botão de início ──────────────────────────────────────────────────────────
-iniciar = st.button(
-    "🚀 Iniciar Download",
-    disabled=st.session_state["rodando"],
-    use_container_width=True,
-)
-
-if iniciar and not st.session_state["rodando"]:
-    # Reseta estado para nova execução
-    st.session_state.update({
-        "rodando": True,
-        "concluido": False,
-        "progresso": 0,
-        "ciclo_atual": 0,
-        "total_ciclos": num_ciclos,
-        "logs": [],
-        "arquivos_zip": None,
-        "erro": None,
-    })
-
-    # Executa o downloader em thread separada para não bloquear a UI
-    t = threading.Thread(
-        target=executar_download,
-        kwargs={
-            "dt_ini": dt_ini,
-            "dt_fim": dt_fim,
-            "num_ciclos": num_ciclos,
-            "itens_pag": str(itens_pag),
-            "cb_progresso": cb_progresso,
-            "cb_finalizado": cb_finalizado,
-        },
-        daemon=True,  # encerra junto com o processo principal se necessário
-    )
-    t.start()
-    st.rerun()
-
-# ── Painel de progresso (visível durante a execução) ─────────────────────────
-if st.session_state["rodando"] or st.session_state["concluido"]:
-
-    ciclo = st.session_state["ciclo_atual"]
-    total = st.session_state["total_ciclos"]
-    pct   = st.session_state["progresso"]
-
-    st.markdown('<div class="status-card">', unsafe_allow_html=True)
-
-    # Animação de descarga enquanto está rodando
-    if st.session_state["rodando"]:
-        st.markdown("""
-        <div class="box-row">
-            <div class="box"></div><div class="box"></div>
-            <div class="box"></div><div class="box"></div>
-            <div class="box"></div>
-        </div>
-        """, unsafe_allow_html=True)
-
-    # Barra de progresso
-    st.markdown(f"""
-    <div style="display:flex; justify-content:space-between; font-size:0.8rem; color:#94a3b8;">
-        <span>Ciclo {ciclo} de {total}</span>
-        <span>{pct}%</span>
-    </div>
-    <div class="progress-track">
-        <div class="progress-bar" style="width:{pct}%"></div>
-    </div>
-    """, unsafe_allow_html=True)
-
-    st.markdown('</div>', unsafe_allow_html=True)
-
-    # Log das últimas 10 linhas
-    logs = st.session_state["logs"][-10:]
-    for entrada in reversed(logs):
-        nivel = entrada.get("nivel", "info")
-        classe = "ok" if nivel == "ok" else ("err" if nivel == "err" else "")
-        st.markdown(
-            f'<div class="log-line {classe}">{entrada["msg"]}</div>',
-            unsafe_allow_html=True,
-        )
-
-    # Re-renderiza a cada 2 s enquanto a thread está viva
-    if st.session_state["rodando"]:
+        input_dt_fim = driver.find_element(By.XPATH, '//*[@id="consultaDataFinal"]')
+        input_dt_fim.click()
+        input_dt_fim.send_keys(dt_fim_str) # Envia a data formatada
+        input_dt_fim.send_keys(Keys.ENTER)
+        
         time.sleep(2)
-        st.rerun()
+        driver.find_element(By.TAG_NAME, 'body').send_keys(Keys.ENTER)
+        time.sleep(2)
 
-# ── Resultado final ───────────────────────────────────────────────────────────
-if st.session_state["concluido"]:
-    if st.session_state["erro"]:
-        st.error(f"❌ Erro durante o download: {st.session_state['erro']}")
-    else:
-        st.success(f"✅ Download concluído! {st.session_state['total_ciclos']} ciclos processados.")
+        # --- Configurar 200 itens por página ---
+        driver.find_element(By.TAG_NAME, 'body').send_keys(Keys.CONTROL + Keys.END)
+        time.sleep(2)
+        
+        select_pag = wait.until(EC.element_to_be_clickable((By.XPATH, '//*[@id="plistagem_center"]/table/tbody/tr/td[8]/select')))
+        select_pag.click()
+        select_pag.send_keys("200")
+        select_pag.send_keys(Keys.ENTER)
+        
+        time.sleep(3)
 
-    # Botão de download — só aparece quando há arquivo disponível
-    if st.session_state["arquivos_zip"]:
-        st.download_button(
-            label="⬇️  Baixar todos os XMLs (.zip)",
-            data=st.session_state["arquivos_zip"],
-            file_name="ctes_xml.zip",
-            mime="application/zip",
-            use_container_width=True,
+        # --- INÍCIO DO LOOP ---
+        # Removi o limite de 65 rígido e coloquei um limite de segurança (ex: 100). 
+        # Ele vai rodar enquanto houver o botão 'Próximo'.
+        for i in range(100): 
+            # Como roda em background no servidor, atualizamos o status na interface do usuário (não no terminal)
+            st.write(f"⏳ Processando página {i+1}...")
+
+            driver.find_element(By.TAG_NAME, 'body').send_keys(Keys.CONTROL + Keys.HOME)
+            wait.until(EC.element_to_be_clickable((By.XPATH, '//*[@id="jqgh_listagem_checkBox"]/div/input'))).click()
+            
+            time.sleep(6)
+            
+            driver.find_element(By.XPATH, '//*[@id="xml_multiplos"]/h3').click()
+            time.sleep(5)
+            driver.find_element(By.TAG_NAME, 'body').send_keys(Keys.ENTER)
+            
+            driver.find_element(By.XPATH, '//*[@id="jqgh_listagem_checkBox"]/div/input').click()
+            time.sleep(2)
+            
+            driver.find_element(By.TAG_NAME, 'body').send_keys(Keys.CONTROL + Keys.END)
+            time.sleep(2)
+            
+            try:
+                next_btn = driver.find_element(By.XPATH, '//*[@id="next_plistagem"]/span')
+                # Verifica se o botão está desabilitado (fim da lista)
+                if "ui-state-disabled" in next_btn.get_attribute("class"):
+                    break
+                next_btn.click()
+            except Exception:
+                break # Sai do loop se der erro ao achar o botão
+                
+        # --- FIM DO LOOP ---
+        
+        # Espera um pouco extra para garantir que os últimos downloads terminem
+        time.sleep(10)
+        
+        # Cria um arquivo ZIP contendo tudo que foi baixado na pasta temporária
+        zip_path = shutil.make_archive(
+            base_name=tempfile.mktemp(), 
+            format='zip', 
+            root_dir=temp_download_dir
         )
+        
+        return zip_path
+        
+    finally:
+        driver.quit() # É vital fechar o driver para não consumir toda a memória do servidor
+        # Remove a pasta temporária do servidor para economizar espaço
+        shutil.rmtree(temp_download_dir, ignore_errors=True) 
+
+# --- Interface de Ação ---
+if st.button("Iniciar Extração"):
+    # Formata as datas no padrão que o site MasterSAF espera (DDMMYYYY, sem barras)
+    dt_ini_formatada = data_inicio.strftime("%d%m%Y")
+    dt_fim_formatada = data_fim.strftime("%d%m%Y")
+
+    # st.spinner cria a animação de carregamento (rodando em background) até o fim do processo
+    with st.spinner("Conectando ao sistema e baixando arquivos... Isso pode levar vários minutos."):
+        try:
+            caminho_arquivo_zip = executar_automacao(dt_ini_formatada, dt_fim_formatada)
+            
+            # Quando a função terminar, a animação some e o botão de download aparece
+            st.success("Automação concluída com sucesso!")
+            
+            with open(caminho_arquivo_zip, "rb") as file:
+                btn = st.download_button(
+                    label="Baixar Arquivos XML (ZIP)",
+                    data=file,
+                    file_name="xmls_mastersaf.zip",
+                    mime="application/zip"
+                )
+                
+            # Limpa o arquivo zip residual do servidor após gerar o botão
+            os.remove(caminho_arquivo_zip)
+            
+        except Exception as e:
+            st.error(f"Ocorreu um erro durante a automação: {e}")
