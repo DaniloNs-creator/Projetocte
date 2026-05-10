@@ -1,501 +1,422 @@
+"""
+downloader.py — Automação Selenium com detecção automática de ambiente.
+
+Estratégia de navegador:
+  • LOCAL  → Microsoft Edge  (webdriver_manager baixa o msedgedriver correto)
+  • DEPLOY → Chromium        (instalado via packages.txt no Streamlit Cloud)
+
+A detecção é feita pela variável STREAMLIT_SHARING_MODE, que o Streamlit Cloud
+define automaticamente. Se não existir, assume ambiente local → usa Edge.
+
+Credenciais: lidas de st.secrets["mastersaf"] — nunca escritas no código.
+"""
+
+import os
+import time
+import shutil
+import tempfile
 import streamlit as st
+
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.support.ui import WebDriverWait, Select
 from selenium.webdriver.support import expected_conditions as EC
-from selenium.webdriver.chrome.options import Options
-from selenium.webdriver.chrome.service import Service
-from webdriver_manager.chrome import ChromeDriverManager
-import time
-import tempfile
-import shutil
-import os
-from datetime import datetime
-import zipfile
 
-# --- Configuração da página Streamlit ---
-st.set_page_config(
-    page_title="Automação MasterSAF", 
-    page_icon="🤖",
-    layout="wide",
-    initial_sidebar_state="collapsed"
-)
 
-# Estilo CSS personalizado para animações
-st.markdown("""
-<style>
-    /* Animação de pulsação para o botão de download */
-    @keyframes pulse {
-        0% { transform: scale(1); }
-        50% { transform: scale(1.05); }
-        100% { transform: scale(1); }
-    }
-    
-    .download-button {
-        animation: pulse 2s infinite;
-        background: linear-gradient(45deg, #4CAF50, #45a049) !important;
-        color: white !important;
-        padding: 15px 30px !important;
-        border-radius: 10px !important;
-        font-weight: bold !important;
-    }
-    
-    /* Animação de carregamento */
-    @keyframes spin {
-        0% { transform: rotate(0deg); }
-        100% { transform: rotate(360deg); }
-    }
-    
-    .loading-spinner {
-        border: 4px solid #f3f3f3;
-        border-top: 4px solid #3498db;
-        border-radius: 50%;
-        width: 40px;
-        height: 40px;
-        animation: spin 1s linear infinite;
-        margin: 20px auto;
-    }
-    
-    /* Barra de progresso animada */
-    .progress-bar {
-        width: 100%;
-        height: 30px;
-        background: linear-gradient(90deg, #4CAF50, #45a049);
-        border-radius: 15px;
-        transition: width 0.3s ease;
-    }
-    
-    /* Contador animado */
-    @keyframes countUp {
-        from { opacity: 0; transform: translateY(20px); }
-        to { opacity: 1; transform: translateY(0); }
-    }
-    
-    .counter-animation {
-        animation: countUp 0.5s ease-out;
-        font-size: 48px;
-        font-weight: bold;
-        color: #4CAF50;
-        text-align: center;
-    }
-</style>
-""", unsafe_allow_html=True)
+# ─────────────────────────────────────────────────────────────────────────────
+# DETECÇÃO DE AMBIENTE
+# ─────────────────────────────────────────────────────────────────────────────
 
-# Título principal com emoji animado
-st.markdown("""
-<h1 style='text-align: center; color: #2E86C1;'>
-    🤖 Robô de Download de XMLs - MasterSAF
-</h1>
-""", unsafe_allow_html=True)
-
-st.markdown("---")
-
-# --- Interface: Inputs do usuário ---
-st.subheader("📋 Configurações da Extração")
-
-col1, col2, col3 = st.columns(3)
-with col1:
-    data_inicio = st.date_input(
-        "📅 Data Inicial", 
-        format="DD/MM/YYYY",
-        help="Selecione a data inicial para filtro"
-    )
-with col2:
-    data_fim = st.date_input(
-        "📅 Data Final", 
-        format="DD/MM/YYYY",
-        help="Selecione a data final para filtro"
-    )
-with col3:
-    itens_por_pagina = st.selectbox(
-        "📄 Itens por página", 
-        ["50", "100", "200", "500"], 
-        index=2,
-        help="Quantidade de registros exibidos por página"
-    )
-
-qtd_loops = st.number_input(
-    "🔄 Quantas páginas processar (loops)?", 
-    min_value=1, 
-    max_value=500, 
-    value=65, 
-    step=1,
-    help="Número máximo de páginas a serem processadas"
-)
-
-# --- Funções Auxiliares ---
-def force_click(driver, element):
-    """Força o clique via JavaScript quando o clique normal não funciona."""
-    try:
-        driver.execute_script("arguments[0].click();", element)
-        return True
-    except Exception as e:
-        st.warning(f"⚠️ Clique forçado falhou: {e}")
-        return False
-
-def scroll_to_element(driver, element):
-    """Centraliza a tela no elemento para garantir visibilidade."""
-    try:
-        driver.execute_script("arguments[0].scrollIntoView({block: 'center', behavior: 'smooth'});", element)
-        time.sleep(0.5)
-    except Exception as e:
-        st.warning(f"⚠️ Scroll falhou: {e}")
-
-def criar_barra_progresso_animada(progresso, total):
-    """Cria HTML para uma barra de progresso animada."""
-    percentual = min(100, int((progresso / total) * 100))
-    return f"""
-    <div style="background: #e0e0e0; border-radius: 15px; height: 30px; margin: 10px 0;">
-        <div class="progress-bar" style="width: {percentual}%; display: flex; align-items: center; justify-content: center;">
-            <span style="color: white; font-weight: bold;">{percentual}%</span>
-        </div>
-    </div>
+def _esta_no_servidor() -> bool:
     """
+    Retorna True quando rodando no Streamlit Cloud (Linux/servidor).
+    O Streamlit Cloud define STREAMLIT_SHARING_MODE=streamlit automaticamente.
+    Em máquina local essa variável não existe → retorna False → usa Edge.
+    """
+    return os.environ.get("STREAMLIT_SHARING_MODE") == "streamlit"
 
-def animar_contador_xmls(total):
-    """Cria animação para o contador de XMLs."""
-    return f"""
-    <div class="counter-animation">
-        📦 {total} XMLs encontrados
-    </div>
-    """
 
-# --- Lógica Principal de Automação ---
-@st.cache_resource
-def get_chrome_driver():
-    """
-    Configura e retorna uma instância do ChromeDriver usando webdriver-manager.
-    Isso resolve o problema de não ter os drivers instalados no ambiente de deploy.
-    """
-    try:
-        # Configura o serviço do ChromeDriver com gerenciamento automático
-        service = Service(ChromeDriverManager().install())
-        return service
-    except Exception as e:
-        st.error(f"❌ Erro ao configurar ChromeDriver: {e}")
-        return None
+# ─────────────────────────────────────────────────────────────────────────────
+# HELPERS INTERNOS
+# ─────────────────────────────────────────────────────────────────────────────
 
-def executar_automacao(dt_ini_str, dt_fim_str, num_itens_pag, num_loops, status_container, progress_bar_container):
+def _force_click(driver, element):
     """
-    Executa a automação completa de download dos XMLs.
+    Clica via JavaScript para contornar elementos fora da viewport
+    ou cobertos por overlays/menus que bloqueiam o clique normal.
     """
-    temp_download_dir = tempfile.mkdtemp(prefix="xml_downloads_")
-    total_xmls_baixados = 0
-    paginas_processadas = 0
-    
-    # Configurações do Chrome para ambiente headless (sem interface gráfica)
-    chrome_options = Options()
-    chrome_options.add_argument("--headless=new")  # Nova sintaxe para headless
-    chrome_options.add_argument("--no-sandbox")
-    chrome_options.add_argument("--disable-dev-shm-usage")
-    chrome_options.add_argument("--window-size=1920,1080")
-    chrome_options.add_argument("--disable-gpu")
-    chrome_options.add_argument("--disable-extensions")
-    chrome_options.add_argument("--disable-notifications")
-    chrome_options.add_argument("--ignore-certificate-errors")
-    chrome_options.add_argument("--allow-running-insecure-content")
-    
-    # Configurações específicas para download
+    driver.execute_script("arguments[0].click();", element)
+
+
+def _scroll_to(driver, element):
+    """Centraliza o elemento na viewport antes de interagir."""
+    driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", element)
+
+
+def _criar_driver_edge(pasta_download: str) -> webdriver.Edge:
+    """
+    Cria o driver do Microsoft Edge para uso LOCAL.
+
+    O EdgeChromiumDriverManager detecta a versão do Edge instalada na máquina
+    e baixa o msedgedriver compatível — sem instalação manual do driver.
+
+    Args:
+        pasta_download: Pasta onde o Edge salvará os arquivos baixados.
+
+    Returns:
+        Instância configurada do webdriver.Edge.
+    """
+    from selenium.webdriver.edge.options import Options as EdgeOptions
+    from selenium.webdriver.edge.service import Service as EdgeService
+    from webdriver_manager.microsoft import EdgeChromiumDriverManager
+
+    opts = EdgeOptions()
+
+    # Headless: roda sem abrir janela visível do navegador
+    opts.add_argument("--headless=new")           # API moderna (Edge ≥ 109)
+    opts.add_argument("--no-sandbox")
+    opts.add_argument("--disable-dev-shm-usage")
+    opts.add_argument("--disable-gpu")
+    opts.add_argument("--window-size=1920,1080")  # resolução virtual
+
+    # Configura pasta de download automático sem popup "Salvar como"
     prefs = {
-        "download.default_directory": temp_download_dir,
-        "download.prompt_for_download": False,
-        "download.directory_upgrade": True,
+        "download.default_directory":         pasta_download,
+        "download.prompt_for_download":       False,
+        "download.directory_upgrade":         True,
         "plugins.always_open_pdf_externally": True,
-        "safebrowsing.enabled": True
+        "safebrowsing.enabled":               True,
     }
-    chrome_options.add_experimental_option("prefs", prefs)
-    chrome_options.add_experimental_option("excludeSwitches", ["enable-logging"])
-    
-    driver = None
-    try:
-        # Obtém o serviço do ChromeDriver
-        chrome_service = get_chrome_driver()
-        if not chrome_service:
-            raise Exception("Não foi possível configurar o ChromeDriver")
-        
-        # Inicializa o driver
-        driver = webdriver.Chrome(service=chrome_service, options=chrome_options)
-        wait = WebDriverWait(driver, 20)
-        
-        # Credenciais (devem ser configuradas nos secrets do Streamlit)
-        usuario = st.secrets["mastersaf"]["username"]
-        senha = st.secrets["mastersaf"]["password"]
-        
-        # --- Fase 1: Login ---
-        status_container.info("🔐 Realizando login no sistema...")
-        driver.get("https://p.dfe.mastersaf.com.br/mvc/login")
-        time.sleep(3)
-        
-        # Preenche usuário
-        user = wait.until(EC.element_to_be_clickable((By.XPATH, '//*[@id="nomeusuario"]')))
-        user.clear()
-        user.send_keys(usuario)
-        time.sleep(1)
-        
-        # Preenche senha e faz login
-        pwd = driver.find_element(By.XPATH, '//*[@id="senha"]')
-        pwd.clear()
-        pwd.send_keys(senha)
-        pwd.send_keys(Keys.ENTER)
-        
-        time.sleep(5)
-        status_container.success("✅ Login realizado com sucesso!")
-        
-        # --- Fase 2: Navegação para Receptor CTEs ---
-        status_container.info("📂 Navegando para Receptor CTEs...")
-        receptor = wait.until(EC.presence_of_element_located((By.XPATH, '//*[@id="linkListagemReceptorCTEs"]/a')))
-        force_click(driver, receptor)
-        time.sleep(5)
-        status_container.success("✅ Página de CTEs acessada!")
-        
-        # --- Fase 3: Aplicar Filtros de Data ---
-        status_container.info("📅 Aplicando filtros de data...")
-        
-        # Data inicial
-        input_dt_ini = wait.until(EC.presence_of_element_located((By.XPATH, '//*[@id="consultaDataInicial"]')))
-        driver.execute_script(f"arguments[0].value = '{dt_ini_str}';", input_dt_ini)
-        time.sleep(1)
-        
-        # Data final
-        input_dt_fim = driver.find_element(By.XPATH, '//*[@id="consultaDataFinal"]')
-        driver.execute_script(f"arguments[0].value = '{dt_fim_str}';", input_dt_fim)
-        input_dt_fim.send_keys(Keys.ENTER)
-        
-        time.sleep(4)
-        status_container.success(f"✅ Filtros aplicados: {dt_ini_str} até {dt_fim_str}")
-        
-        # --- Fase 4: Configurar itens por página ---
-        status_container.info(f"⚙️ Configurando {num_itens_pag} itens por página...")
-        select_pag_element = wait.until(EC.presence_of_element_located(
-            (By.XPATH, '//*[@id="plistagem_center"]/table/tbody/tr/td[8]/select')
-        ))
-        scroll_to_element(driver, select_pag_element)
-        
-        select = Select(select_pag_element)
-        select.select_by_visible_text(num_itens_pag)
-        time.sleep(4)
-        
-        # Tenta obter informações de paginação
-        try:
-            info_paginacao = driver.find_element(By.CLASS_NAME, "ui-paging-info").text
-            if info_paginacao:
-                status_container.info(f"📊 {info_paginacao}")
-        except:
-            pass
-        
-        # --- Fase 5: Loop de Processamento ---
-        status_container.info("🔄 Iniciando processamento das páginas...")
-        
-        for i in range(num_loops):
-            paginas_processadas = i + 1
-            
-            # Atualiza barra de progresso
-            with progress_bar_container:
-                st.markdown(
-                    criar_barra_progresso_animada(paginas_processadas, num_loops), 
-                    unsafe_allow_html=True
-                )
-            
-            # Atualiza status
-            status_container.info(
-                f"⏳ Processando página {paginas_processadas} de {num_loops} | "
-                f"XMLs encontrados: {total_xmls_baixados}"
-            )
-            
-            try:
-                # Selecionar todos os checkboxes da página
-                checkbox_all = wait.until(EC.presence_of_element_located(
-                    (By.XPATH, '//*[@id="jqgh_listagem_checkBox"]/div/input')
-                ))
-                scroll_to_element(driver, checkbox_all)
-                force_click(driver, checkbox_all)
-                time.sleep(2)
-                
-                # Contar XMLs nesta página
-                itens_selecionados = driver.find_elements(By.XPATH, '//td//input[@type="checkbox"]')
-                qtd_nesta_pagina = len(itens_selecionados)
-                total_xmls_baixados += qtd_nesta_pagina
-                
-                # Atualiza contador animado
-                with progress_bar_container:
-                    st.markdown(animar_contador_xmls(total_xmls_baixados), unsafe_allow_html=True)
-                
-                status_container.success(
-                    f"✅ Página {paginas_processadas}: {qtd_nesta_pagina} XMLs selecionados | "
-                    f"Total acumulado: {total_xmls_baixados}"
-                )
-                
-                # Clicar em "XML Múltiplos" para download
-                btn_xml = wait.until(EC.presence_of_element_located(
-                    (By.XPATH, '//*[@id="xml_multiplos"]/h3')
-                ))
-                scroll_to_element(driver, btn_xml)
-                force_click(driver, btn_xml)
-                time.sleep(6)
-                
-                # Desmarcar todos para próxima iteração
-                force_click(driver, checkbox_all)
-                time.sleep(2)
-                
-                # Navegar para próxima página
-                if i < num_loops - 1:  # Não tenta ir para próxima na última iteração
-                    try:
-                        next_btn = wait.until(EC.presence_of_element_located(
-                            (By.XPATH, '//*[@id="next_plistagem"]/span')
-                        ))
-                        scroll_to_element(driver, next_btn)
-                        
-                        # Verifica se botão está desabilitado
-                        if "ui-state-disabled" in next_btn.get_attribute("class"):
-                            status_container.info(f"🏁 Última página atingida: {paginas_processadas}")
-                            break
-                        
-                        force_click(driver, next_btn)
-                        time.sleep(4)
-                    except:
-                        status_container.info("🏁 Não foi possível navegar para próxima página. Finalizando.")
-                        break
-                
-            except Exception as e:
-                status_container.warning(f"⚠️ Erro na página {paginas_processadas}: {str(e)[:100]}")
-                continue
-        
-        # --- Finalização e Compactação ---
-        status_container.info("📦 Compactando arquivos baixados...")
-        time.sleep(3)
-        
-        # Criar arquivo ZIP
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        zip_filename = f"xmls_mastersaf_{timestamp}"
-        zip_path = shutil.make_archive(
-            base_name=os.path.join(tempfile.gettempdir(), zip_filename),
-            format='zip',
-            root_dir=temp_download_dir
-        )
-        
-        status_container.success(
-            f"🎉 Extração concluída com sucesso! {total_xmls_baixados} XMLs processados em {paginas_processadas} páginas."
-        )
-        
-        return zip_path, total_xmls_baixados, paginas_processadas
-        
-    except Exception as e:
-        status_container.error(f"❌ Erro na automação: {str(e)}")
-        raise e
-    finally:
-        if driver:
-            driver.quit()
-        # Limpa diretório temporário após 5 segundos
-        try:
-            time.sleep(5)
-            shutil.rmtree(temp_download_dir, ignore_errors=True)
-        except:
-            pass
+    opts.add_experimental_option("prefs", prefs)
 
-# --- Interface Principal ---
-st.markdown("---")
-col1, col2, col3 = st.columns([1, 2, 1])
+    # Baixa o msedgedriver compatível com a versão do Edge instalada
+    service = EdgeService(EdgeChromiumDriverManager().install())
+    return webdriver.Edge(service=service, options=opts)
 
-with col2:
-    iniciar = st.button(
-        "▶️ Iniciar Extração", 
-        type="primary", 
-        use_container_width=True,
-        help="Clique para iniciar o processo de extração dos XMLs"
-    )
 
-# Container para status e progresso
-status_placeholder = st.empty()
-progress_placeholder = st.empty()
-resultado_placeholder = st.empty()
+def _criar_driver_chromium(pasta_download: str) -> webdriver.Chrome:
+    """
+    Cria o driver do Chromium para uso no SERVIDOR (Streamlit Cloud).
 
-if iniciar:
-    # Validações básicas
-    if data_fim < data_inicio:
-        st.error("❌ A data final deve ser maior ou igual à data inicial!")
+    O Chromium e seu driver são instalados via packages.txt (apt-get).
+    Não é necessário webdriver_manager — o driver já está no PATH do servidor.
+
+    Args:
+        pasta_download: Pasta onde o Chromium salvará os arquivos baixados.
+
+    Returns:
+        Instância configurada do webdriver.Chrome apontando para Chromium.
+    """
+    from selenium.webdriver.chrome.options import Options as ChromeOptions
+    from selenium.webdriver.chrome.service import Service as ChromeService
+
+    opts = ChromeOptions()
+
+    # Obrigatório em Linux sem interface gráfica (servidor)
+    opts.add_argument("--headless=new")
+    opts.add_argument("--no-sandbox")
+    opts.add_argument("--disable-dev-shm-usage")
+    opts.add_argument("--disable-gpu")
+    opts.add_argument("--window-size=1920,1080")
+
+    # Aponta para o binário do Chromium instalado pelo apt
+    opts.binary_location = "/usr/bin/chromium"
+
+    # Configura pasta de download automático sem popup "Salvar como"
+    prefs = {
+        "download.default_directory":         pasta_download,
+        "download.prompt_for_download":       False,
+        "download.directory_upgrade":         True,
+        "plugins.always_open_pdf_externally": True,
+        "safebrowsing.enabled":               True,
+    }
+    opts.add_experimental_option("prefs", prefs)
+
+    # Usa o chromedriver instalado pelo apt (já no PATH do servidor)
+    service = ChromeService("/usr/bin/chromedriver")
+    return webdriver.Chrome(service=service, options=opts)
+
+
+def _criar_driver(pasta_download: str):
+    """
+    Fábrica de drivers: escolhe Edge (local) ou Chromium (servidor)
+    com base no ambiente detectado automaticamente.
+
+    Args:
+        pasta_download: Pasta de destino dos downloads.
+
+    Returns:
+        Driver configurado para o ambiente atual.
+    """
+    if _esta_no_servidor():
+        return _criar_driver_chromium(pasta_download)  # Streamlit Cloud
     else:
-        # Formata as datas
-        dt_ini_formatada = data_inicio.strftime("%d%m%Y")
-        dt_fim_formatada = data_fim.strftime("%d%m%Y")
-        
-        # Mostra spinner inicial
-        with st.spinner("🚀 Inicializando automação..."):
-            try:
-                # Executa a automação
-                caminho_arquivo_zip, qtd_total, paginas = executar_automacao(
-                    dt_ini_formatada,
-                    dt_fim_formatada,
-                    itens_por_pagina,
-                    qtd_loops,
-                    status_placeholder,
-                    progress_placeholder
+        return _criar_driver_edge(pasta_download)      # Máquina local (Edge)
+
+
+def _aguardar_downloads(pasta: str, timeout: int = 90) -> list:
+    """
+    Bloqueia até que todos os downloads em andamento terminem.
+
+    Monitora duas extensões temporárias:
+      • .crdownload — Edge e Chrome/Chromium usam durante o download
+      • .tmp        — Edge usa em alguns cenários específicos
+
+    Args:
+        pasta:   Pasta de download monitorada.
+        timeout: Tempo máximo de espera em segundos.
+
+    Returns:
+        Lista de caminhos absolutos dos arquivos baixados com sucesso.
+    """
+    inicio = time.time()
+    while time.time() - inicio < timeout:
+        pendentes = [
+            f for f in os.listdir(pasta)
+            if f.endswith(".crdownload") or f.endswith(".tmp")
+        ]
+        if not pendentes:
+            break
+        time.sleep(1.5)
+
+    # Retorna apenas arquivos completos (sem temporários)
+    return [
+        os.path.join(pasta, f)
+        for f in os.listdir(pasta)
+        if not f.endswith(".crdownload")
+        and not f.endswith(".tmp")
+        and os.path.isfile(os.path.join(pasta, f))
+    ]
+
+
+def _contar_checkboxes_linha(driver) -> int:
+    """
+    Conta checkboxes dentro de células <td> (linhas de dados).
+    Exclui o checkbox mestre que fica no cabeçalho <th>.
+
+    Returns:
+        Número de itens selecionáveis na página atual.
+    """
+    itens = driver.find_elements(By.XPATH, '//td//input[@type="checkbox"]')
+    return len(itens)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# FUNÇÃO PRINCIPAL — chamada pela thread em app.py
+# ─────────────────────────────────────────────────────────────────────────────
+
+def executar_automacao(
+    dt_ini_str:    str,
+    dt_fim_str:    str,
+    num_itens_pag: str,
+    num_loops:     int,
+    cb_progresso,        # callable(pag_atual, total, xmls_pagina, mensagem, nivel)
+    cb_finalizado,       # callable(zip_bytes | None, erro | None)
+) -> None:
+    """
+    Fluxo completo de automação:
+      1. Detecta ambiente e inicia Edge (local) ou Chromium (servidor)
+      2. Login no MasterSAF DFE
+      3. Navega para Receptor CTEs
+      4. Aplica filtro de datas via JavaScript
+      5. Configura itens por página
+      6. Loop: seleciona todos → baixa XMLs → aguarda downloads → avança página
+      7. Compacta tudo em ZIP e retorna via callback
+
+    Deve ser chamada em uma thread separada para não bloquear o Streamlit.
+
+    Args:
+        dt_ini_str:    Data inicial formato DDMMAAAA, ex: "01092025".
+        dt_fim_str:    Data final formato DDMMAAAA, ex: "31012026".
+        num_itens_pag: Itens por página: "50", "100", "200" ou "500".
+        num_loops:     Número máximo de páginas a processar.
+        cb_progresso:  Callback chamado a cada ciclo com dados de progresso.
+        cb_finalizado: Callback chamado ao encerrar com ZIP (bytes) ou erro.
+    """
+    pasta_temp  = tempfile.mkdtemp(prefix="mastersaf_xmls_")
+    caminho_zip = None  # inicializado aqui para o finally não quebrar
+    driver      = None
+
+    try:
+        # ── Credenciais do secrets.toml ───────────────────────────────────
+        # Configure em .streamlit/secrets.toml (local) ou Streamlit Cloud Secrets.
+        # Nunca escreva usuário/senha diretamente no código!
+        usuario = st.secrets["mastersaf"]["username"]
+        senha   = st.secrets["mastersaf"]["password"]
+
+        # Informa qual navegador será usado neste ambiente
+        nav = "Chromium (servidor)" if _esta_no_servidor() else "Microsoft Edge (local)"
+        cb_progresso(0, num_loops, 0, f"Iniciando {nav}...", "info")
+
+        driver = _criar_driver(pasta_temp)
+        wait   = WebDriverWait(driver, 25)
+
+        # ── 1. Login ───────────────────────────────────────────────────────
+        cb_progresso(0, num_loops, 0, "Acessando MasterSAF DFE...", "info")
+        driver.get("https://p.dfe.mastersaf.com.br/mvc/login")
+
+        campo_user = wait.until(
+            EC.element_to_be_clickable((By.XPATH, '//*[@id="nomeusuario"]'))
+        )
+        campo_user.send_keys(usuario)
+
+        campo_pwd = driver.find_element(By.XPATH, '//*[@id="senha"]')
+        campo_pwd.send_keys(senha)
+        campo_pwd.send_keys(Keys.ENTER)
+
+        cb_progresso(0, num_loops, 0, "Login enviado. Aguardando redirecionamento...", "info")
+        time.sleep(5)
+
+        # ── 2. Navega para Receptor CTEs ───────────────────────────────────
+        cb_progresso(0, num_loops, 0, "Navegando para Receptor CTEs...", "info")
+        receptor = wait.until(
+            EC.presence_of_element_located((By.XPATH, '//*[@id="linkListagemReceptorCTEs"]/a'))
+        )
+        _force_click(driver, receptor)
+        time.sleep(5)
+
+        # ── 3. Filtro de datas via JavaScript ──────────────────────────────
+        # JS é mais confiável que send_keys em campos com máscara de data,
+        # pois bypassa o formatador automático do Edge.
+        ini_fmt = f"{dt_ini_str[:2]}/{dt_ini_str[2:4]}/{dt_ini_str[4:]}"
+        fim_fmt = f"{dt_fim_str[:2]}/{dt_fim_str[2:4]}/{dt_fim_str[4:]}"
+        cb_progresso(0, num_loops, 0, f"Filtro: {ini_fmt} → {fim_fmt}", "info")
+
+        campo_ini = wait.until(
+            EC.presence_of_element_located((By.XPATH, '//*[@id="consultaDataInicial"]'))
+        )
+        driver.execute_script(f"arguments[0].value = '{dt_ini_str}';", campo_ini)
+
+        campo_fim = driver.find_element(By.XPATH, '//*[@id="consultaDataFinal"]')
+        driver.execute_script(f"arguments[0].value = '{dt_fim_str}';", campo_fim)
+        campo_fim.send_keys(Keys.ENTER)
+        time.sleep(4)
+
+        # ── 4. Itens por página ────────────────────────────────────────────
+        cb_progresso(0, num_loops, 0, f"Configurando {num_itens_pag} itens/página...", "info")
+
+        select_el = wait.until(
+            EC.presence_of_element_located(
+                (By.XPATH, '//*[@id="plistagem_center"]/table/tbody/tr/td[8]/select')
+            )
+        )
+        _scroll_to(driver, select_el)
+        Select(select_el).select_by_visible_text(num_itens_pag)
+        time.sleep(4)
+
+        # ── 5. Loop de páginas ─────────────────────────────────────────────
+        for i in range(num_loops):
+            pag_atual = i + 1
+            cb_progresso(
+                pag_atual, num_loops, 0,
+                f"[{pag_atual}/{num_loops}] Selecionando itens...", "info"
+            )
+
+            # Marca todos os registros da página com o checkbox mestre
+            checkbox_all = wait.until(
+                EC.presence_of_element_located(
+                    (By.XPATH, '//*[@id="jqgh_listagem_checkBox"]/div/input')
                 )
-                
-                # Exibe resultados finais
-                with resultado_placeholder.container():
-                    st.markdown("---")
-                    st.markdown("## 📊 Resumo da Extração")
-                    
-                    col1, col2, col3 = st.columns(3)
-                    with col1:
-                        st.metric("📄 Total de XMLs", qtd_total)
-                    with col2:
-                        st.metric("📑 Páginas Processadas", paginas)
-                    with col3:
-                        st.metric("🗓️ Período", f"{data_inicio.strftime('%d/%m/%Y')} - {data_fim.strftime('%d/%m/%Y')}")
-                    
-                    st.markdown("---")
-                    
-                    # Botão de download com animação
-                    with open(caminho_arquivo_zip, "rb") as file:
-                        st.download_button(
-                            label=f"⬇️ BAIXAR ARQUIVOS (ZIP - {qtd_total} XMLs)",
-                            data=file,
-                            file_name=f"xmls_mastersaf_{datetime.now().strftime('%Y%m%d_%H%M%S')}.zip",
-                            mime="application/zip",
-                            use_container_width=True,
-                            type="primary"
-                        )
-                    
-                    # Limpa o arquivo ZIP após disponibilizar
-                    try:
-                        os.remove(caminho_arquivo_zip)
-                    except:
-                        pass
-                    
-            except Exception as e:
-                st.error(f"❌ Erro crítico durante a execução: {str(e)}")
-                st.info("💡 Verifique suas credenciais e tente novamente.")
+            )
+            _scroll_to(driver, checkbox_all)
+            _force_click(driver, checkbox_all)
+            time.sleep(3)
 
-# Informações adicionais
-st.markdown("---")
-with st.expander("ℹ️ Informações e Ajuda"):
-    st.markdown("""
-    ### Como usar:
-    1. **Datas**: Selecione o período desejado para extração
-    2. **Itens por página**: Escolha quantos registros por página (200 recomendado)
-    3. **Loops**: Número máximo de páginas a processar
-    4. **Iniciar**: Clique para começar a extração automática
-    
-    ### Observações:
-    - O processo roda em segundo plano (headless)
-    - Os arquivos são compactados em ZIP automaticamente
-    - O botão de download aparece quando tudo estiver pronto
-    - As credenciais são armazenadas com segurança nos secrets do Streamlit
-    
-    ### Configuração dos Secrets:
-    Crie um arquivo `.streamlit/secrets.toml` com:
-    ```toml
-    [mastersaf]
-    username = "seu_usuario"
-    password = "sua_senha"
-    ```
-    """)
+            # Conta itens selecionados para atualizar o contador acumulado
+            qtd = _contar_checkboxes_linha(driver)
+            cb_progresso(
+                pag_atual, num_loops, qtd,
+                f"[{pag_atual}/{num_loops}] {qtd} XML(s) — baixando...", "info"
+            )
 
-# Rodapé
-st.markdown("---")
-st.markdown(
-    "<p style='text-align: center; color: gray;'>Desenvolvido com ❤️ | Versão 2.0</p>", 
-    unsafe_allow_html=True
-)
+            # Clica em "XML Múltiplos" para disparar o download
+            btn_xml = wait.until(
+                EC.presence_of_element_located((By.XPATH, '//*[@id="xml_multiplos"]/h3'))
+            )
+            _scroll_to(driver, btn_xml)
+            _force_click(driver, btn_xml)
+            time.sleep(5)
+
+            # Aguarda o Edge/Chromium finalizar todos os downloads antes de avançar
+            _aguardar_downloads(pasta_temp, timeout=90)
+
+            # Desmarca seleção para não interferir na próxima página
+            _force_click(driver, checkbox_all)
+            time.sleep(2)
+
+            cb_progresso(
+                pag_atual, num_loops, 0,
+                f"[{pag_atual}/{num_loops}] Página concluída ✓", "ok"
+            )
+
+            # ── Avança para a próxima página ───────────────────────────────
+            try:
+                next_btn = wait.until(
+                    EC.presence_of_element_located((By.XPATH, '//*[@id="next_plistagem"]/span'))
+                )
+                _scroll_to(driver, next_btn)
+
+                # Verifica se o botão está desabilitado (chegou na última página)
+                classes = next_btn.get_attribute("class") or ""
+                if "ui-state-disabled" in classes:
+                    cb_progresso(
+                        pag_atual, num_loops, 0,
+                        "Última página atingida. Encerrando loop.", "ok"
+                    )
+                    break
+
+                _force_click(driver, next_btn)
+                time.sleep(4)
+
+            except Exception:
+                # Botão não encontrado = chegamos na última página
+                cb_progresso(
+                    pag_atual, num_loops, 0,
+                    "Botão 'Próximo' não encontrado. Fim da listagem.", "ok"
+                )
+                break
+
+        # ── 6. Compacta todos os XMLs em um único ZIP ──────────────────────
+        cb_progresso(num_loops, num_loops, 0, "Compactando arquivos em ZIP...", "info")
+
+        # Aguarda downloads residuais antes de zipar
+        _aguardar_downloads(pasta_temp, timeout=30)
+
+        zip_base    = tempfile.mktemp(prefix="mastersaf_zip_")
+        caminho_zip = shutil.make_archive(
+            base_name=zip_base,
+            format="zip",
+            root_dir=pasta_temp,
+        )
+
+        # Lê o ZIP em memória (bytes) para entregar ao Streamlit via callback.
+        # Passar bytes evita problemas de caminho entre threads diferentes.
+        with open(caminho_zip, "rb") as f:
+            zip_bytes = f.read()
+
+        total = st.session_state.get("total_xmls", 0)
+        cb_progresso(num_loops, num_loops, 0, f"ZIP gerado — {total} XML(s).", "ok")
+        cb_finalizado(zip_bytes, None)  # ✅ sucesso
+
+    except Exception as exc:
+        # Captura qualquer exceção inesperada e repassa para a UI
+        cb_finalizado(None, str(exc))
+
+    finally:
+        # Sempre fecha o navegador — mesmo em caso de erro
+        if driver:
+            try:
+                driver.quit()
+            except Exception:
+                pass
+
+        # Remove pasta temporária de downloads
+        shutil.rmtree(pasta_temp, ignore_errors=True)
+
+        # Remove o arquivo ZIP temporário do disco (já foi lido em memória)
+        if caminho_zip:
+            try:
+                os.remove(caminho_zip)
+            except Exception:
+                pass
