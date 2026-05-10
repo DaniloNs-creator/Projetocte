@@ -65,11 +65,14 @@ if st.sidebar.button("🚀 Iniciar Automação"):
                 driver.find_element(By.XPATH, '//*[@id="senha"]').click()
                 driver.find_element(By.XPATH, '//*[@id="senha"]').send_keys(senha)
                 
-                driver.find_element(By.XPATH, '//*[@id="enter"]').click()
+                # SOLUÇÃO DO ERRO: Clique via JavaScript para ignorar o rodapé (disclaimer)
+                botao_enter = driver.find_element(By.XPATH, '//*[@id="enter"]')
+                driver.execute_script("arguments[0].click();", botao_enter)
                 time.sleep(3)
                 
                 st.write("Navegando até a Listagem de Receptor CTEs...")
-                driver.find_element(By.XPATH, '//*[@id="linkListagemReceptorCTEs"]/a').click()
+                link_cte = driver.find_element(By.XPATH, '//*[@id="linkListagemReceptorCTEs"]/a')
+                driver.execute_script("arguments[0].click();", link_cte)
                 time.sleep(3)
                 
                 # Datas
@@ -86,7 +89,8 @@ if st.sidebar.button("🚀 Iniciar Automação"):
                 time.sleep(3)
                 
                 st.write("Atualizando listagem...")
-                driver.find_element(By.XPATH, '//*[@id="listagem_atualiza"]').click()
+                btn_atualiza = driver.find_element(By.XPATH, '//*[@id="listagem_atualiza"]')
+                driver.execute_script("arguments[0].click();", btn_atualiza)
                 time.sleep(3)
                 
                 # Seleção de exibição (Option 5)
@@ -101,20 +105,29 @@ if st.sidebar.button("🚀 Iniciar Automação"):
                 for i in range(int(qtd_loops)):
                     st.write(f"Processando página {i+1}...")
                     
-                    driver.find_element(By.XPATH, '//*[@id="jqgh_listagem_checkBox"]/div/input').click()
+                    # Selecionar todos
+                    check_todos = driver.find_element(By.XPATH, '//*[@id="jqgh_listagem_checkBox"]/div/input')
+                    driver.execute_script("arguments[0].click();", check_todos)
                     time.sleep(3)
                     
-                    driver.find_element(By.XPATH, '//*[@id="xml_multiplos"]/h3').click()
+                    # Clicar em XML Múltiplos
+                    xml_multiplos = driver.find_element(By.XPATH, '//*[@id="xml_multiplos"]/h3')
+                    driver.execute_script("arguments[0].click();", xml_multiplos)
                     time.sleep(3)
                     
-                    driver.find_element(By.XPATH, '//*[@id="downloadEmMassaXml"]').click()
+                    # Clicar em Download
+                    btn_download = driver.find_element(By.XPATH, '//*[@id="downloadEmMassaXml"]')
+                    driver.execute_script("arguments[0].click();", btn_download)
                     time.sleep(2)
                     
-                    # Desmarcar e ir para Próxima Página
-                    driver.find_element(By.XPATH, '//*[@id="jqgh_listagem_checkBox"]/div/input').click()
+                    # Desmarcar todos
+                    check_todos = driver.find_element(By.XPATH, '//*[@id="jqgh_listagem_checkBox"]/div/input')
+                    driver.execute_script("arguments[0].click();", check_todos)
                     time.sleep(1)
                     
-                    driver.find_element(By.XPATH, '//*[@id="next_plistagem"]/span').click()
+                    # Próxima Página (também via JS para evitar sobreposições)
+                    btn_next = driver.find_element(By.XPATH, '//*[@id="next_plistagem"]/span')
+                    driver.execute_script("arguments[0].click();", btn_next)
                     
                     # Atualiza a barra de progresso na tela do Streamlit
                     progresso = (i + 1) / int(qtd_loops)
