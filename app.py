@@ -1,197 +1,212 @@
-import tkinter as tk
-from tkinter import ttk, scrolledtext, messagebox
-import threading
+import streamlit as st
+import os
+import shutil
+import zipfile
 import time
 from selenium import webdriver
+from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
 
-class AppMasterSaf:
-    def __init__(self, root):
-        self.root = root
-        self.root.title("MasterSAF - Automação de Download XML")
-        self.root.geometry("600x650")
-        self.root.configure(padx=20, pady=20)
-        self.root.resizable(False, False)
+# Configuração da página (DEVE ser a primeira linha do Streamlit)
+st.set_page_config(page_title="Portal MasterSAF", page_icon="🏢", layout="wide")
 
-        # Configurando o estilo visual (Tema moderno do ttk)
-        self.style = ttk.Style()
-        self.style.theme_use('clam') # 'clam', 'alt', 'default', ou 'classic'
+# ==========================================
+# LAYOUT PROFISSIONAL (CSS E HTML INJETADO)
+# ==========================================
+st.markdown("""
+    <style>
+        /* Oculta os menus padrão e rodapé do Streamlit */
+        #MainMenu {visibility: hidden;}
+        footer {visibility: hidden;}
+        header {visibility: hidden;}
         
-        # Estilos customizados
-        self.style.configure("TFrame", background="#f0f0f0")
-        self.style.configure("TLabel", background="#f0f0f0", font=("Segoe UI", 10))
-        self.style.configure("TButton", font=("Segoe UI", 10, "bold"), padding=6)
-        self.style.configure("TLabelframe", background="#f0f0f0", font=("Segoe UI", 11, "bold"))
-        self.style.configure("TLabelframe.Label", background="#f0f0f0", foreground="#333333")
+        /* Cor de fundo principal mais suave */
+        .stApp {
+            background-color: #f8f9fa;
+        }
         
-        self.root.configure(bg="#f0f0f0")
-
-        self.criar_widgets()
-
-    def criar_widgets(self):
-        # --- FRAME DE CREDENCIAIS ---
-        frame_login = ttk.LabelFrame(self.root, text=" 1. Credenciais de Acesso ")
-        frame_login.pack(fill="x", pady=(0, 15), ipady=5)
-
-        ttk.Label(frame_login, text="Login:").grid(row=0, column=0, padx=10, pady=10, sticky="w")
-        self.entry_usuario = ttk.Entry(frame_login, width=30)
-        self.entry_usuario.grid(row=0, column=1, padx=10, pady=10, sticky="w")
-
-        ttk.Label(frame_login, text="Senha:").grid(row=0, column=2, padx=10, pady=10, sticky="w")
-        self.entry_senha = ttk.Entry(frame_login, width=20, show="*")
-        self.entry_senha.grid(row=0, column=3, padx=10, pady=10, sticky="w")
-
-        # --- FRAME DE CONFIGURAÇÕES DE PESQUISA ---
-        frame_config = ttk.LabelFrame(self.root, text=" 2. Configurações da Pesquisa e Loop ")
-        frame_config.pack(fill="x", pady=(0, 15), ipady=5)
-
-        ttk.Label(frame_config, text="Data Inicial:").grid(row=0, column=0, padx=10, pady=10, sticky="w")
-        self.entry_dt_ini = ttk.Entry(frame_config, width=15)
-        self.entry_dt_ini.insert(0, "08/05/2026")
-        self.entry_dt_ini.grid(row=0, column=1, padx=10, pady=10, sticky="w")
-
-        ttk.Label(frame_config, text="Data Final:").grid(row=0, column=2, padx=10, pady=10, sticky="w")
-        self.entry_dt_fin = ttk.Entry(frame_config, width=15)
-        self.entry_dt_fin.insert(0, "08/05/2026")
-        self.entry_dt_fin.grid(row=0, column=3, padx=10, pady=10, sticky="w")
-
-        ttk.Label(frame_config, text="Qtd. de Loops (Páginas):").grid(row=1, column=0, columnspan=2, padx=10, pady=10, sticky="w")
-        self.entry_loops = ttk.Entry(frame_config, width=10)
-        self.entry_loops.insert(0, "5") # Valor padrão
-        self.entry_loops.grid(row=1, column=2, padx=10, pady=10, sticky="w")
-
-        # --- BOTÃO DE INICIAR ---
-        self.btn_iniciar = ttk.Button(self.root, text="🚀 INICIAR AUTOMAÇÃO", command=self.iniciar_thread)
-        self.btn_iniciar.pack(fill="x", pady=(0, 15), ipady=5)
-
-        # --- FRAME DE LOGS (Terminal visual) ---
-        frame_log = ttk.LabelFrame(self.root, text=" Painel de Atividades ")
-        frame_log.pack(fill="both", expand=True)
-
-        self.log_text = scrolledtext.ScrolledText(frame_log, wrap=tk.WORD, width=60, height=10, font=("Consolas", 9), bg="#1e1e1e", fg="#00ff00")
-        self.log_text.pack(padx=10, pady=10, fill="both", expand=True)
-        self.log_text.config(state=tk.DISABLED)
+        /* Estilização do Cabeçalho Customizado */
+        .custom-header {
+            background: linear-gradient(90deg, #1e3c72 0%, #2a5298 100%);
+            color: white;
+            padding: 1.8rem;
+            border-radius: 8px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+            margin-bottom: 2rem;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            text-align: center;
+        }
+        .custom-header h1 {
+            margin: 0;
+            font-size: 2.2rem;
+            font-weight: 600;
+        }
+        .custom-header p {
+            margin: 5px 0 0 0;
+            font-size: 1.1rem;
+            opacity: 0.9;
+        }
         
-        self.inserir_log("Aplicativo iniciado. Aguardando comando...")
+        /* Estilização dos Botões */
+        .stButton>button {
+            width: 100%;
+            background-color: #2a5298;
+            color: white;
+            border-radius: 6px;
+            padding: 0.6rem;
+            font-weight: bold;
+            border: none;
+            transition: all 0.3s ease;
+        }
+        .stButton>button:hover {
+            background-color: #1e3c72;
+            box-shadow: 0 4px 12px rgba(42, 82, 152, 0.4);
+            color: #ffffff;
+            transform: translateY(-2px);
+        }
+        
+        /* Sidebar Styling */
+        [data-testid="stSidebar"] {
+            background-color: #ffffff;
+            box-shadow: 2px 0 5px rgba(0,0,0,0.05);
+        }
+    </style>
+    
+    <div class="custom-header">
+        <h1>🏢 Portal Automação MasterSAF</h1>
+        <p>Extração e Download em Massa de Arquivos XML (CT-e)</p>
+    </div>
+""", unsafe_allow_html=True)
 
-    def inserir_log(self, mensagem):
-        """Função para inserir texto no painel de atividades"""
-        self.log_text.config(state=tk.NORMAL)
-        self.log_text.insert(tk.END, f"> {mensagem}\n")
-        self.log_text.see(tk.END) # Rola automaticamente para o final
-        self.log_text.config(state=tk.DISABLED)
+# ==========================================
+# BARRA LATERAL (CONFIGURAÇÕES)
+# ==========================================
+st.sidebar.markdown("### 🔐 Credenciais de Acesso")
+usuario = st.sidebar.text_input("Usuário MasterSAF")
+senha = st.sidebar.text_input("Senha MasterSAF", type="password")
 
-    def iniciar_thread(self):
-        """Inicia a automação em uma thread separada para não travar a interface"""
-        # Validação básica
-        if not self.entry_usuario.get() or not self.entry_senha.get():
-            messagebox.showwarning("Aviso", "Por favor, preencha Login e Senha!")
-            return
+st.sidebar.markdown("---")
+st.sidebar.markdown("### 📅 Parâmetros de Filtro")
+data_ini = st.sidebar.text_input("Data Inicial", value="08/05/2026")
+data_fin = st.sidebar.text_input("Data Final", value="08/05/2026")
+
+# Permitindo até 1000 loops sem quebrar a UI
+qtd_loops = st.sidebar.number_input("Qtd. Páginas (Loops)", min_value=1, max_value=1000, value=5)
+
+# ==========================================
+# TUNING DO DRIVER PARA SUPORTAR 1000 LOOPS
+# ==========================================
+def get_driver(download_path):
+    chrome_options = Options()
+    
+    # Argumentos essenciais de headless
+    chrome_options.add_argument("--headless=new")
+    chrome_options.add_argument("--window-size=1920x1080")
+    
+    # OTIMIZAÇÕES DE MEMÓRIA PARA LOOPS LONGOS (Evita travamentos)
+    chrome_options.add_argument("--no-sandbox")
+    chrome_options.add_argument("--disable-dev-shm-usage") # Usa disco no lugar da RAM (crucial para nuvem)
+    chrome_options.add_argument("--disable-gpu")
+    chrome_options.add_argument("--disable-software-rasterizer")
+    chrome_options.add_argument("--disable-extensions")
+    chrome_options.add_argument("--disable-infobars")
+    chrome_options.add_argument("--js-flags=--expose-gc") # Permite coleta de lixo de memória do JS
+    
+    # Configuração de diretório de download
+    prefs = {
+        "download.default_directory": download_path,
+        "download.prompt_for_download": False,
+        "directory_upgrade": True,
+        "safebrowsing.enabled": False # Evita pausas em verificações de arquivos
+    }
+    chrome_options.add_experimental_option("prefs", prefs)
+    chrome_options.binary_location = "/usr/bin/chromium"
+    
+    return webdriver.Chrome(service=Service("/usr/bin/chromedriver"), options=chrome_options)
+
+# ==========================================
+# LÓGICA PRINCIPAL MANTIDA INTACTA
+# ==========================================
+if st.sidebar.button("🚀 Iniciar Processamento"):
+    if not usuario or not senha:
+        st.error("⚠️ Atenção: Preencha o usuário e a senha para continuar.")
+    else:
+        # Preparar pastas de trabalho
+        dl_path = "/tmp/downloads"
+        if os.path.exists(dl_path): 
+            shutil.rmtree(dl_path)
+        os.makedirs(dl_path)
+        
+        # Componentes visuais do Streamlit
+        status_box = st.info("Inicializando ambiente e navegador...")
+        progress_bar = st.progress(0)
         
         try:
-            int(self.entry_loops.get())
-        except ValueError:
-            messagebox.showerror("Erro", "A quantidade de loops deve ser um número inteiro!")
-            return
-
-        self.btn_iniciar.config(state=tk.DISABLED) # Desabilita o botão para evitar múltiplos cliques
-        self.inserir_log("--- Nova execução iniciada ---")
-        
-        # Cria e inicia a Thread
-        thread = threading.Thread(target=self.rodar_automacao)
-        thread.daemon = True
-        thread.start()
-
-    def rodar_automacao(self):
-        usuario = self.entry_usuario.get()
-        senha = self.entry_senha.get()
-        dt_ini = self.entry_dt_ini.get()
-        dt_fin = self.entry_dt_fin.get()
-        loops = int(self.entry_loops.get())
-
-        self.inserir_log("Abrindo o navegador Google Chrome...")
-        driver = None
-
-        try:
-            driver = webdriver.Chrome()
-            driver.maximize_window()
+            driver = get_driver(dl_path)
             
-            self.inserir_log("Acessando a página de login...")
+            # Login
+            status_box.info("Acessando o sistema MasterSAF e realizando autenticação...")
             driver.get("https://p.dfe.mastersaf.com.br/mvc/login")
-            time.sleep(2)
-            
-            self.inserir_log("Realizando Login...")
-            driver.find_element(By.XPATH, '//*[@id="nomeusuario"]').click()
             driver.find_element(By.XPATH, '//*[@id="nomeusuario"]').send_keys(usuario)
-            
-            driver.find_element(By.XPATH, '//*[@id="senha"]').click()
             driver.find_element(By.XPATH, '//*[@id="senha"]').send_keys(senha)
+            driver.execute_script("arguments[0].click();", driver.find_element(By.XPATH, '//*[@id="enter"]'))
+            time.sleep(4)
             
-            driver.find_element(By.XPATH, '//*[@id="enter"]').click()
+            # Navegação
+            status_box.info("Navegando até o módulo de Listagem de CT-es...")
+            driver.execute_script("arguments[0].click();", driver.find_element(By.XPATH, '//*[@id="linkListagemReceptorCTEs"]/a'))
             time.sleep(3)
             
-            self.inserir_log("Acessando Listagem Receptor CTEs...")
-            driver.find_element(By.XPATH, '//*[@id="linkListagemReceptorCTEs"]/a').click()
+            # Datas
+            for xpath, val in [('//*[@id="consultaDataInicial"]', data_ini), ('//*[@id="consultaDataFinal"]', data_fin)]:
+                el = driver.find_element(By.XPATH, xpath)
+                el.send_keys(Keys.CONTROL, 'a', Keys.BACKSPACE)
+                el.send_keys(val)
+            
+            status_box.info("Atualizando base de dados com as datas informadas...")
+            driver.execute_script("arguments[0].click();", driver.find_element(By.XPATH, '//*[@id="listagem_atualiza"]'))
             time.sleep(3)
             
-            self.inserir_log(f"Inserindo datas: {dt_ini} a {dt_fin}")
-            campo_dt_inicial = driver.find_element(By.XPATH, '//*[@id="consultaDataInicial"]')
-            campo_dt_inicial.click()
-            campo_dt_inicial.send_keys(Keys.CONTROL, 'a')
-            campo_dt_inicial.send_keys(dt_ini)
-            
-            campo_dt_final = driver.find_element(By.XPATH, '//*[@id="consultaDataFinal"]')
-            campo_dt_final.click()
-            campo_dt_final.send_keys(Keys.CONTROL, 'a')
-            campo_dt_final.send_keys(dt_fin)
-            time.sleep(3)
-            
-            self.inserir_log("Atualizando listagem...")
-            driver.find_element(By.XPATH, '//*[@id="listagem_atualiza"]').click()
-            time.sleep(3)
-            
-            self.inserir_log("Selecionando opção 5 na tabela...")
-            driver.find_element(By.XPATH, '//*[@id="plistagem_center"]/table/tbody/tr/td[8]/select').click()
-            time.sleep(1)
+            # Seleção de visualização
             driver.find_element(By.XPATH, '//*[@id="plistagem_center"]/table/tbody/tr/td[8]/select/option[5]').click()
             time.sleep(3)
             
-            self.inserir_log(f"Iniciando loop de download ({loops} vezes)...")
-            for i in range(loops):
-                self.inserir_log(f"Processando página {i + 1} de {loops}...")
+            # Loop de Downloads
+            for i in range(int(qtd_loops)):
+                # Substitui apenas o texto do quadro, sem criar novas linhas na tela
+                status_box.info(f"⏳ Processando e extraindo página {i+1} de {int(qtd_loops)}...")
                 
-                driver.find_element(By.XPATH, '//*[@id="jqgh_listagem_checkBox"]/div/input').click()
-                time.sleep(3)
+                driver.execute_script("arguments[0].click();", driver.find_element(By.XPATH, '//*[@id="jqgh_listagem_checkBox"]/div/input'))
+                driver.execute_script("arguments[0].click();", driver.find_element(By.XPATH, '//*[@id="xml_multiplos"]/h3'))
+                driver.execute_script("arguments[0].click();", driver.find_element(By.XPATH, '//*[@id="downloadEmMassaXml"]'))
                 
-                driver.find_element(By.XPATH, '//*[@id="xml_multiplos"]/h3').click()
-                time.sleep(3)
+                time.sleep(8) # Aguarda o download completar
                 
-                driver.find_element(By.XPATH, '//*[@id="downloadEmMassaXml"]').click()
-                time.sleep(2)
+                driver.execute_script("arguments[0].click();", driver.find_element(By.XPATH, '//*[@id="jqgh_listagem_checkBox"]/div/input'))
+                driver.execute_script("arguments[0].click();", driver.find_element(By.XPATH, '//*[@id="next_plistagem"]/span'))
                 
-                driver.find_element(By.XPATH, '//*[@id="jqgh_listagem_checkBox"]/div/input').click()
-                time.sleep(1)
-                
-                self.inserir_log(f"Avançando para a próxima página...")
-                driver.find_element(By.XPATH, '//*[@id="next_plistagem"]/span').click()
+                # Atualiza a barra
+                progress_bar.progress((i + 1) / int(qtd_loops))
                 time.sleep(4)
-                
-            self.inserir_log("🎉 Automação concluída com sucesso!")
-            messagebox.showinfo("Sucesso", "Todos os downloads foram concluídos!")
+
+            # Compactar
+            status_box.info("📦 Compactando todos os arquivos extraídos (ZIP)...")
+            zip_filename = "/tmp/resultado.zip"
+            with zipfile.ZipFile(zip_filename, 'w') as zipf:
+                for root, _, files in os.walk(dl_path):
+                    for file in files:
+                        zipf.write(os.path.join(root, file), file)
+            
+            status_box.success("✅ Processamento concluído com sucesso!")
+            
+            # Botão de download estilizado gerado
+            with open(zip_filename, "rb") as f:
+                st.download_button("📥 DOWNLOAD DOS ARQUIVOS (ZIP)", f, "XMLs_MasterSaf.zip", "application/zip")
+            
+            driver.quit()
             
         except Exception as e:
-            self.inserir_log(f"❌ ERRO: {str(e)}")
-            messagebox.showerror("Erro na Automação", f"Ocorreu um erro:\n{str(e)}")
-            
-        finally:
-            self.inserir_log("Fechando o navegador...")
-            if driver:
-                driver.quit()
-            # Reabilita o botão para permitir rodar novamente
-            self.btn_iniciar.config(state=tk.NORMAL)
-
-if __name__ == "__main__":
-    root = tk.Tk()
-    app = AppMasterSaf(root)
-    root.mainloop()
+            st.error(f"❌ Ocorreu um erro técnico: {e}")
+            if 'driver' in locals(): driver.quit()
