@@ -17,44 +17,38 @@ st.title("Robô de Download de XMLs - MasterSAF")
 # --- Interface: Inputs do usuário ---
 st.subheader("Configurações da Extração")
 
-# Linha 1: Datas
 col1, col2 = st.columns(2)
 with col1:
     data_inicio = st.date_input("Data Inicial", format="DD/MM/YYYY")
 with col2:
     data_fim = st.date_input("Data Final", format="DD/MM/YYYY")
 
-# Linha 2: Configurações de Loop e Paginação
 col3, col4 = st.columns(2)
 with col3:
-    # Opções que normalmente aparecem no dropdown do site (ajuste se necessário)
     itens_por_pagina = st.selectbox("Itens por página", ["50", "100", "200", "500"], index=2)
 with col4:
-    # Campo para o usuário definir quantas vezes o loop vai rodar (padrão 65)
     qtd_loops = st.number_input("Quantas páginas processar (loops)?", min_value=1, max_value=500, value=65, step=1)
 
-# --- Funções Auxiliares (Prevenção de Erros Headless) ---
+# --- Funções Auxiliares ---
 def force_click(driver, element):
-    """Força o clique via JavaScript, ignorando telas de carregamento sobrepostas."""
+    """Força o clique via JavaScript."""
     driver.execute_script("arguments[0].click();", element)
 
 def scroll_to_element(driver, element):
-    """Centraliza a tela no elemento para garantir que ele esteja visível."""
+    """Centraliza a tela no elemento."""
     driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", element)
 
 # --- Lógica Principal de Automação ---
-def executar_automacao(dt_ini_str, dt_fim_str, num_itens_pag, num_loops):
-    # Pasta temporária segura para os downloads
+def executar_automacao(dt_ini_str, dt_fim_str, num_itens_pag, num_loops, container_progresso):
     temp_download_dir = tempfile.mkdtemp()
+    total_xmls_baixados = 0  # Inicializa o contador de XMLs
 
-    # Configurações do Chrome Headless para servidores na nuvem
     chrome_options = Options()
     chrome_options.add_argument("--headless") 
     chrome_options.add_argument("--no-sandbox") 
     chrome_options.add_argument("--disable-dev-shm-usage") 
     chrome_options.add_argument("--window-size=1920,1080") 
     
-    # Redirecionar downloads para a pasta temporária
     prefs = {
         "download.default_directory": temp_download_dir,
         "download.prompt_for_download": False,
@@ -67,7 +61,6 @@ def executar_automacao(dt_ini_str, dt_fim_str, num_itens_pag, num_loops):
     wait = WebDriverWait(driver, 20)
 
     try:
-        # Busca as credenciais de forma segura (configurado no Secrets do Streamlit Cloud)
         usuario = st.secrets["mastersaf"]["username"]
         senha = st.secrets["mastersaf"]["password"]
 
@@ -85,7 +78,6 @@ def executar_automacao(dt_ini_str, dt_fim_str, num_itens_pag, num_loops):
         # --- 2. Navegação para Receptor CTEs ---
         receptor = wait.until(EC.presence_of_element_located((By.XPATH, '//*[@id="linkListagemReceptorCTEs"]/a')))
         force_click(driver, receptor)
-        
         time.sleep(5)
 
         # --- 3. Filtro de Datas ---
@@ -98,25 +90,42 @@ def executar_automacao(dt_ini_str, dt_fim_str, num_itens_pag, num_loops):
         input_dt_fim.send_keys(Keys.ENTER)
         time.sleep(4)
 
-        # --- 4. Configurar itens por página (Dinâmico) ---
+        # --- 4. Configurar itens por página ---
         select_pag_element = wait.until(EC.presence_of_element_located((By.XPATH, '//*[@id="plistagem_center"]/table/tbody/tr/td[8]/select')))
         scroll_to_element(driver, select_pag_element)
         
         select = Select(select_pag_element)
-        select.select_by_visible_text(num_itens_pag) # Usa o valor selecionado na interface
+        select.select_by_visible_text(num_itens_pag) 
         time.sleep(4)
 
-        # --- 5. INÍCIO DO LOOP (Dinâmico) ---
-        for i in range(num_loops): 
-            # Atualiza o status na tela para o usuário saber o progresso
-            st.write(f"⏳ Processando página {i+1} de {num_loops}...")
+        # Tenta pegar a informação de totalização do sistema (opcional, pode não existir no HTML exato)
+        try:
+            info_paginacao = driver.find_element(By.CLASS_NAME, "ui-paging-info").text
+            if info_paginacao:
+                st.info(f"📊 Informação do sistema (MasterSAF): {info_paginacao}")
+        except Exception:
+            pass # Se não encontrar a classe, ignora de forma silenciosa
 
-            # Selecionar todos os itens
+        # --- 5. INÍCIO DO LOOP ---
+        for i in range(num_loops): 
+            # Atualiza o texto dinâmico (sobresscreve o anterior em vez de criar novas linhas)
+            container_progresso.warning(f"⏳ Processando página {i+1} de {num_loops} | **Total encontrado até agora: {total_xmls_baixados}**")
+
+            # Selecionar todos os itens da tabela
             checkbox_all = wait.until(EC.presence_of_element_located((By.XPATH, '//*[@id="jqgh_listagem_checkBox"]/div/input')))
             scroll_to_element(driver, checkbox_all)
             force_click(driver, checkbox_all)
             time.sleep(3) 
             
+            # --- CONTAGEM FÍSICA DOS XMLS ---
+            # Encontra todos os checkboxes que pertencem às linhas (<td>) para não contar o checkbox mestre (<th>)
+            itens_selecionados = driver.find_elements(By.XPATH, '//td//input[@type="checkbox"]')
+            qtd_nesta_pagina = len(itens_selecionados)
+            total_xmls_baixados += qtd_nesta_pagina
+            
+            # Atualiza a interface com o novo número computado
+            container_progresso.warning(f"⏳ Processando página {i+1} de {num_loops} | **Total encontrado até agora: {total_xmls_baixados}**")
+
             # Clicar em XML Múltiplos
             btn_xml = wait.until(EC.presence_of_element_located((By.XPATH, '//*[@id="xml_multiplos"]/h3')))
             scroll_to_element(driver, btn_xml)
@@ -132,9 +141,8 @@ def executar_automacao(dt_ini_str, dt_fim_str, num_itens_pag, num_loops):
                 next_btn = wait.until(EC.presence_of_element_located((By.XPATH, '//*[@id="next_plistagem"]/span')))
                 scroll_to_element(driver, next_btn)
                 
-                # Se o botão estiver desabilitado, significa que chegou na última página antes de completar todos os loops previstos
                 if "ui-state-disabled" in next_btn.get_attribute("class"):
-                    st.info(f"Fim da listagem atingido na página {i+1}.")
+                    container_progresso.info(f"Fim da listagem atingido na página {i+1}.")
                     break
                     
                 force_click(driver, next_btn)
@@ -144,20 +152,18 @@ def executar_automacao(dt_ini_str, dt_fim_str, num_itens_pag, num_loops):
                 
         # --- FIM DO LOOP ---
         
-        st.write("📦 Compactando arquivos baixados...")
-        time.sleep(5) # Aguarda para garantir que o último arquivo terminou de baixar
+        container_progresso.success(f"📦 Extração finalizada! Compactando {total_xmls_baixados} arquivos...")
+        time.sleep(5) 
         
-        # Cria o arquivo .zip com todo o conteúdo baixado
         zip_path = shutil.make_archive(
             base_name=tempfile.mktemp(), 
             format='zip', 
             root_dir=temp_download_dir
         )
         
-        return zip_path
+        return zip_path, total_xmls_baixados
         
     finally:
-        # Garante que o navegador vai fechar e os temporários serão limpos mesmo em caso de erro
         driver.quit() 
         shutil.rmtree(temp_download_dir, ignore_errors=True) 
 
@@ -167,23 +173,31 @@ if st.button("▶️ Iniciar Extração"):
     dt_ini_formatada = data_inicio.strftime("%d%m%Y")
     dt_fim_formatada = data_fim.strftime("%d%m%Y")
 
-    with st.spinner("Conectando ao sistema e baixando arquivos... Isso pode levar vários minutos."):
+    # Cria um espaço vazio (container) que será atualizado em tempo real pela função
+    espaco_progresso = st.empty()
+
+    with st.spinner("Conectando ao sistema e aplicando filtros..."):
         try:
-            # Passamos os novos parâmetros dinâmicos para a função
-            caminho_arquivo_zip = executar_automacao(dt_ini_formatada, dt_fim_formatada, itens_por_pagina, qtd_loops)
+            # Chama a função passando o espaço dinâmico
+            caminho_arquivo_zip, qtd_total = executar_automacao(
+                dt_ini_formatada, 
+                dt_fim_formatada, 
+                itens_por_pagina, 
+                qtd_loops, 
+                espaco_progresso # Passando a referência do container do Streamlit
+            )
             
-            st.success("✅ Automação concluída com sucesso!")
+            # Mensagem final de sucesso exibindo o total de XMLs encontrados
+            st.success(f"✅ Sucesso! O robô localizou e tentou baixar um total de **{qtd_total} XML(s)**.")
             
-            # Habilita o botão de download para o arquivo gerado
             with open(caminho_arquivo_zip, "rb") as file:
                 st.download_button(
-                    label="⬇️ Baixar Arquivos XML (ZIP)",
+                    label=f"⬇️ Baixar Arquivos (ZIP com {qtd_total} itens)",
                     data=file,
                     file_name="xmls_mastersaf.zip",
                     mime="application/zip"
                 )
                 
-            # Limpa o arquivo zip temporário do servidor
             os.remove(caminho_arquivo_zip)
             
         except Exception as e:
