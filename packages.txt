@@ -1,0 +1,10 @@
+# packages.txt — Pacotes de sistema instalados pelo Streamlit Cloud
+#
+# O Streamlit Cloud usa Ubuntu. Para rodar Selenium headless é preciso
+# ter o Google Chrome instalado no servidor. Este arquivo instrui o
+# Streamlit Cloud a instalar o Chrome via apt antes de subir o app.
+#
+# Referência: https://docs.streamlit.io/deploy/streamlit-community-cloud/deploy-your-app/app-dependencies
+
+chromium
+chromium-driver

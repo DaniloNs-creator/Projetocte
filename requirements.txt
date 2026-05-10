@@ -1,0 +1,8 @@
+# requirements.txt — Dependências do projeto CTE Downloader
+#
+# Instale localmente com:  pip install -r requirements.txt
+# O Streamlit Cloud instala automaticamente ao fazer deploy.
+
+streamlit>=1.35.0           # Framework de interface web
+selenium>=4.20.0            # Automação de navegador
+webdriver-manager>=4.0.1   # Baixa o chromedriver automaticamente (sem instalação manual)
