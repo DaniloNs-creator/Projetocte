@@ -241,6 +241,13 @@ html, body, [data-testid="stAppViewContainer"], .stApp {
     border-bottom: 1px solid var(--border-primary) !important;
 }
 
+/* ── DATAFRAME ── */
+[data-testid="stDataFrame"] {
+    background: var(--bg-secondary) !important;
+    border: 1px solid var(--border-primary) !important;
+    border-radius: 0 !important;
+}
+
 /* ── CODE ── */
 code {
     background: var(--bg-tertiary) !important;
@@ -261,19 +268,9 @@ a:hover { text-decoration: underline !important; }
     font-size: 0.72rem !important;
 }
 
-/* ── METRIC ── */
-[data-testid="stMetric"] {
-    background: var(--bg-secondary) !important;
-    border: 1px solid var(--border-primary) !important;
-    padding: 1rem !important;
-    border-radius: 0 !important;
-}
-[data-testid="stMetric"] label {
+/* ── CAPTION ── */
+.stCaption {
     color: var(--text-muted) !important;
-    font-family: 'IBM Plex Mono', monospace !important;
-}
-[data-testid="stMetric"] [data-testid="stMetricValue"] {
-    color: var(--acid) !important;
     font-family: 'IBM Plex Mono', monospace !important;
 }
 </style>
@@ -295,7 +292,7 @@ st.markdown("""
 left_col, right_col = st.columns([1.05, 2], gap="small")
 
 # ─────────────────────────────────────────────
-# LEFT PANEL — Form (Dark)
+# LEFT PANEL — Form (Dark) - CREDENCIAIS NO TOPO
 # ─────────────────────────────────────────────
 with left_col:
     st.markdown("""
@@ -304,15 +301,17 @@ with left_col:
         <div style="font-family:'Syne',sans-serif; font-size:1.55rem; font-weight:800; color:#e4e6ea; line-height:1.1; margin-bottom:0.4rem;">Captura<br>em Massa</div>
         <div style="font-family:'IBM Plex Mono',monospace; font-size:0.66rem; color:#8b8f98; line-height:1.6; margin-bottom:1.6rem;">Extração automatizada de CT-e<br>via portal MasterSAF · até 1000 págs.</div>
         <hr style="border:none; border-top:1px solid #1f2329; margin:0 0 1.2rem;">
-        <div style="font-family:'IBM Plex Mono',monospace; font-size:0.58rem; letter-spacing:0.2em; text-transform:uppercase; color:#5a5e66; margin-bottom:0.5rem;">Credenciais de Acesso</div>
     </div>
     """, unsafe_allow_html=True)
 
+    # ── CREDENCIAIS (AGORA NO TOPO) ──
+    st.markdown('<div style="font-family:\'IBM Plex Mono\',monospace; font-size:0.58rem; letter-spacing:0.2em; text-transform:uppercase; color:#5a5e66; margin-bottom:0.5rem;">🔐 Credenciais de Acesso</div>', unsafe_allow_html=True)
     usuario = st.text_input("Usuário", placeholder="login@empresa.com.br", key="usr")
     senha   = st.text_input("Senha", type="password", placeholder="••••••••", key="pwd")
 
+    # ── PERÍODO ──
     st.markdown('<hr style="border:none; border-top:1px solid #1f2329; margin:1.2rem 0 0.8rem;">', unsafe_allow_html=True)
-    st.markdown('<div style="font-family:\'IBM Plex Mono\',monospace; font-size:0.58rem; letter-spacing:0.2em; text-transform:uppercase; color:#5a5e66; margin-bottom:0.5rem;">Período de Consulta</div>', unsafe_allow_html=True)
+    st.markdown('<div style="font-family:\'IBM Plex Mono\',monospace; font-size:0.58rem; letter-spacing:0.2em; text-transform:uppercase; color:#5a5e66; margin-bottom:0.5rem;">📅 Período de Consulta</div>', unsafe_allow_html=True)
 
     col_a, col_b = st.columns(2)
     with col_a:
@@ -320,13 +319,15 @@ with left_col:
     with col_b:
         data_fin = st.text_input("Data Final", value="08/05/2026", key="df")
 
+    # ── PARÂMETROS ──
     st.markdown('<hr style="border:none; border-top:1px solid #1f2329; margin:1.2rem 0 0.8rem;">', unsafe_allow_html=True)
-    st.markdown('<div style="font-family:\'IBM Plex Mono\',monospace; font-size:0.58rem; letter-spacing:0.2em; text-transform:uppercase; color:#5a5e66; margin-bottom:0.5rem;">Parâmetros</div>', unsafe_allow_html=True)
+    st.markdown('<div style="font-family:\'IBM Plex Mono\',monospace; font-size:0.58rem; letter-spacing:0.2em; text-transform:uppercase; color:#5a5e66; margin-bottom:0.5rem;">⚙️ Parâmetros</div>', unsafe_allow_html=True)
 
     qtd_loops = st.number_input("Qtd. Páginas (Loops)", min_value=1, max_value=1000, value=5)
 
+    # ── PÓS-PROCESSAMENTO ──
     st.markdown('<hr style="border:none; border-top:1px solid #1f2329; margin:1.2rem 0 0.8rem;">', unsafe_allow_html=True)
-    st.markdown('<div style="font-family:\'IBM Plex Mono\',monospace; font-size:0.58rem; letter-spacing:0.2em; text-transform:uppercase; color:#5a5e66; margin-bottom:0.5rem;">Pós-Processamento</div>', unsafe_allow_html=True)
+    st.markdown('<div style="font-family:\'IBM Plex Mono\',monospace; font-size:0.58rem; letter-spacing:0.2em; text-transform:uppercase; color:#5a5e66; margin-bottom:0.5rem;">📊 Pós-Processamento</div>', unsafe_allow_html=True)
 
     processar_xml = st.checkbox("Extrair ZIPs e processar XMLs para Excel", value=True, key="processar")
 
@@ -568,7 +569,7 @@ class CTeProcessor:
         """Exporta os dados processados para Excel"""
         if self.processed_data:
             df = pd.DataFrame(self.processed_data)
-            df.to_excel(output_path, index=False, sheet_name='Dados_CTe')
+            df.to_excel(output_path, index=False, sheet_name='Dados_CTe', engine='openpyxl')
             return True, len(df)
         return False, 0
     
@@ -923,7 +924,7 @@ if iniciar:
             driver.quit()
             driver = None
             
-            # ── ETAPA 9: Pós-processamento (se checkbox marcado) ──
+            # ── ETAPA 9: Pós-processamento ──
             if processar_xml:
                 log("=" * 50, "info")
                 log("📦 INICIANDO PROCESSAMENTO DOS ARQUIVOS", "info")
@@ -1007,7 +1008,7 @@ if iniciar:
                                     "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                                 )
                             
-                            # Mostra preview da tabela
+                            # Preview da tabela
                             st.dataframe(
                                 df.head(10),
                                 use_container_width=True,
