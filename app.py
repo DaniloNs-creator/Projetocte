@@ -471,7 +471,7 @@ class XMLProcessor:
                 fields = self.extract_all_fields(root)
                 fields['_arquivo_origem'] = xml_file.name
                 file_data_list.append(fields)
-            except Exception as e:
+            except Exception:
                 pass
         if file_data_list:
             df = pd.DataFrame(file_data_list)
@@ -484,7 +484,7 @@ class XMLProcessor:
         if self.processed_data:
             df = pd.DataFrame(self.processed_data)
             buf = BytesIO()
-            df.to_excel(buf, index=False, sheet_name='Dados_XML')
+            df.to_excel(buf, index=False, sheet_name='Dados_XML', engine='openpyxl')
             buf.seek(0)
             return buf.getvalue(), len(df)
         return None, 0
@@ -555,38 +555,37 @@ def processar_arquivos_baixados_mastersaf(base_dir, log_list):
     return excel_bytes, num_registros, None
 
 
-def executar_captura_mastersaf(usuario, senha, dt_ini, dt_fin, loops, processar, state_dict):
+def executar_captura_mastersaf(usuario, senha, dt_ini, dt_fin, loops, processar):
     """
-    Executa a captura em massa MasterSAF em uma thread separada.
-    state_dict é um dicionário compartilhado para atualizar logs e status em tempo real.
+    Executa a captura em massa MasterSAF.
+    ATUALIZA DIRETAMENTE O ST.SESSION_STATE para sincronização em tempo real.
     """
-    logs = state_dict['logs']
     temp_dir = tempfile.mkdtemp(prefix="mastersaf_downloads_")
     
     def log(msg):
         ts = datetime.now().strftime("%H:%M:%S")
-        logs.append(f"[{ts}] {msg}")
-        state_dict['status_msg'] = msg
+        st.session_state.ms_logs.append(f"[{ts}] {msg}")
+        st.session_state.ms_status_msg = msg
     
     driver = None
     
     try:
         # Encontrar Chrome
         log("Procurando Chrome/Chromium no sistema...")
-        chrome_binary = "/usr/bin/chromium"
+        chrome_binary = None
+        possible_paths = [
+            "/usr/bin/chromium",
+            "/usr/bin/google-chrome",
+            "/usr/bin/chromium-browser",
+            "/snap/bin/chromium"
+        ]
+        for path in possible_paths:
+            if os.path.isfile(path):
+                chrome_binary = path
+                break
         
-        if not os.path.isfile(chrome_binary):
-            possible_paths = [
-                "/usr/bin/google-chrome",
-                "/usr/bin/chromium-browser",
-                "/snap/bin/chromium"
-            ]
-            for path in possible_paths:
-                if os.path.isfile(path):
-                    chrome_binary = path
-                    break
-            else:
-                raise Exception("Chrome/Chromium não encontrado. Instale: sudo apt-get install chromium-browser")
+        if not chrome_binary:
+            raise Exception("Chrome/Chromium não encontrado.")
         
         log(f"Browser encontrado: {chrome_binary}")
         
@@ -608,15 +607,7 @@ def executar_captura_mastersaf(usuario, senha, dt_ini, dt_fin, loops, processar,
         chrome_options.add_experimental_option("prefs", prefs)
         
         log("Inicializando ChromeDriver...")
-        
-        # Tenta usar chromedriver do sistema ou webdriver_manager
-        try:
-            service = Service("/usr/bin/chromedriver")
-            driver = webdriver.Chrome(service=service, options=chrome_options)
-        except Exception:
-            service = Service(ChromeDriverManager().install())
-            driver = webdriver.Chrome(service=service, options=chrome_options)
-        
+        driver = webdriver.Chrome(options=chrome_options)
         log("ChromeDriver inicializado com sucesso!")
         
         # Login
@@ -655,13 +646,13 @@ def executar_captura_mastersaf(usuario, senha, dt_ini, dt_fin, loops, processar,
         # Loop de captura
         total_paginas = int(loops)
         log(f"Iniciando captura em massa: {total_paginas} página(s)...")
-        state_dict['page_total'] = total_paginas
+        st.session_state.ms_page_total = total_paginas
         
         for i in range(total_paginas):
             pagina_atual = i + 1
             log(f"Processando página {pagina_atual}/{total_paginas}...")
-            state_dict['page_atual'] = pagina_atual
-            state_dict['stage'] = "download"
+            st.session_state.ms_page_atual = pagina_atual
+            st.session_state.ms_stage = "download"
             
             # Seleciona todos
             driver.execute_script("arguments[0].click();", driver.find_element(By.XPATH, '//*[@id="jqgh_listagem_checkBox"]/div/input'))
@@ -689,30 +680,30 @@ def executar_captura_mastersaf(usuario, senha, dt_ini, dt_fin, loops, processar,
             time.sleep(2)
         
         log("Captura finalizada!")
-        state_dict['stage'] = "extract"
+        st.session_state.ms_stage = "extract"
         
         # Contar arquivos
         zip_files = list(Path(temp_dir).glob('*.zip'))
-        state_dict['arquivos_capturados'] = len(zip_files)
+        st.session_state.ms_arquivos_capturados = len(zip_files)
         
         # Pós-processamento
         if processar:
-            state_dict['stage'] = "excel"
-            excel_bytes, num_registros, err = processar_arquivos_baixados_mastersaf(temp_dir, logs)
-            state_dict['excel_bytes'] = excel_bytes
-            state_dict['xml_count'] = num_registros
+            st.session_state.ms_stage = "excel"
+            excel_bytes, num_registros, err = processar_arquivos_baixados_mastersaf(temp_dir, st.session_state.ms_logs)
+            st.session_state.ms_excel_bytes = excel_bytes
+            st.session_state.ms_xml_count = num_registros
             if err:
-                state_dict['error_msg'] = err
+                st.session_state.ms_error_msg = err
         else:
             log("⚠ Processamento desativado. Arquivos disponíveis na pasta temporária.")
         
-        state_dict['stage'] = "done"
+        st.session_state.ms_stage = "done"
         
     except Exception as e:
         log(f"❌ ERRO CRÍTICO: {str(e)}")
         log(traceback.format_exc())
-        state_dict['error_msg'] = str(e)
-        state_dict['stage'] = "done"
+        st.session_state.ms_error_msg = str(e)
+        st.session_state.ms_stage = "done"
     finally:
         if driver is not None:
             try:
@@ -721,8 +712,8 @@ def executar_captura_mastersaf(usuario, senha, dt_ini, dt_fin, loops, processar,
                 pass
         log("Processo finalizado.")
         shutil.rmtree(temp_dir, ignore_errors=True)
-        state_dict['running'] = False
-        state_dict['done'] = True
+        st.session_state.ms_running = False
+        st.session_state.ms_done = True
 
 
 def processador_mastersaf():
@@ -854,12 +845,12 @@ def processador_mastersaf():
         # Alertas
         if st.session_state.ms_error_msg:
             st.error(f"❌ {st.session_state.ms_error_msg}")
-        elif st.session_state.ms_stage == "done" and st.session_state.ms_excel_bytes:
+        elif st.session_state.ms_stage == "done" and st.session_state.ms_excel_bytes is not None:
             st.success(f"✅ Captura concluída! {st.session_state.ms_xml_count} registros extraídos.")
         elif st.session_state.ms_running:
             st.info(f"⏳ {st.session_state.ms_status_msg}")
         elif st.session_state.ms_done:
-            st.info(f"Captura finalizada.")
+            st.info("Captura finalizada.")
         
         # Barra de progresso
         if st.session_state.ms_running:
@@ -875,7 +866,7 @@ def processador_mastersaf():
         ph(f'<div class="ms-console">{log_text}</div>')
         
         # Download Excel
-        if st.session_state.ms_done and st.session_state.ms_excel_bytes:
+        if st.session_state.ms_done and st.session_state.ms_excel_bytes is not None:
             st.markdown("---")
             periodo = f"{data_ini.replace('/','_')}_a_{data_fin.replace('/','_')}"
             st.download_button(
@@ -892,7 +883,6 @@ def processador_mastersaf():
     
     # Se está rodando, faz polling para atualizar a interface
     if st.session_state.ms_running:
-        # Pequeno delay para não sobrecarregar
         time.sleep(2)
         st.rerun()
     
@@ -914,29 +904,10 @@ def processador_mastersaf():
             st.session_state.ms_logs = []
             st.session_state.ms_arquivos_capturados = 0
             
-            # Criar dicionário compartilhado para a thread
-            # Usamos o próprio st.session_state pois ele é thread-safe no Streamlit
-            # A thread escreve diretamente nas chaves ms_*
-            
+            # Iniciar thread que atualiza diretamente o st.session_state
             t = threading.Thread(
                 target=executar_captura_mastersaf,
-                args=(
-                    usuario, senha, data_ini, data_fin,
-                    int(qtd_loops), processar_xml,
-                    {
-                        'logs': st.session_state.ms_logs,
-                        'running': True,
-                        'done': False,
-                        'error_msg': '',
-                        'page_atual': 0,
-                        'page_total': int(qtd_loops),
-                        'status_msg': 'Iniciando...',
-                        'stage': 'download',
-                        'xml_count': 0,
-                        'excel_bytes': None,
-                        'arquivos_capturados': 0,
-                    }
-                ),
+                args=(usuario, senha, data_ini, data_fin, int(qtd_loops), processar_xml),
                 daemon=True,
             )
             t.start()
