@@ -68,6 +68,12 @@ html, body, [data-testid="stAppViewContainer"], .stApp {
     max-width: 100% !important;
 }
 
+/* Força o container principal a usar flexbox em coluna */
+[data-testid="stVerticalBlock"] {
+    display: flex !important;
+    flex-direction: column !important;
+}
+
 ::-webkit-scrollbar { width: 4px; height: 4px; }
 ::-webkit-scrollbar-track { background: var(--bg-secondary); }
 ::-webkit-scrollbar-thumb { background: var(--border-secondary); border-radius: 0; }
@@ -292,26 +298,41 @@ st.markdown("""
 left_col, right_col = st.columns([1.05, 2], gap="small")
 
 # ─────────────────────────────────────────────
-# LEFT PANEL — Form (Dark) - CREDENCIAIS NO TOPO
+# LEFT PANEL — CREDENCIAIS NO TOPO ABSOLUTO
 # ─────────────────────────────────────────────
 with left_col:
+    # Container escuro que envolve todo o painel esquerdo
+    with st.container():
+        st.markdown("""
+        <div style="background:#111318; padding:2.2rem 2rem 0.5rem; border-right:1px solid #1f2329;">
+            <div style="font-family:'IBM Plex Mono',monospace; font-size:0.58rem; letter-spacing:0.25em; text-transform:uppercase; color:#c6ff00; margin-bottom:0.3rem;">Módulo de Captura</div>
+            <div style="font-family:'Syne',sans-serif; font-size:1.55rem; font-weight:800; color:#e4e6ea; line-height:1.1; margin-bottom:0.4rem;">Captura<br>em Massa</div>
+            <div style="font-family:'IBM Plex Mono',monospace; font-size:0.66rem; color:#8b8f98; line-height:1.6; margin-bottom:1.2rem;">Extração automatizada de CT-e<br>via portal MasterSAF · até 1000 págs.</div>
+        </div>
+        """, unsafe_allow_html=True)
+
+    # ── CREDENCIAIS (PRIMEIRO CAMPO) ──
     st.markdown("""
-    <div style="background:#111318; padding:2.2rem 2rem 1rem; border-right:1px solid #1f2329; min-height:100vh;">
-        <div style="font-family:'IBM Plex Mono',monospace; font-size:0.58rem; letter-spacing:0.25em; text-transform:uppercase; color:#c6ff00; margin-bottom:0.3rem;">Módulo de Captura</div>
-        <div style="font-family:'Syne',sans-serif; font-size:1.55rem; font-weight:800; color:#e4e6ea; line-height:1.1; margin-bottom:0.4rem;">Captura<br>em Massa</div>
-        <div style="font-family:'IBM Plex Mono',monospace; font-size:0.66rem; color:#8b8f98; line-height:1.6; margin-bottom:1.6rem;">Extração automatizada de CT-e<br>via portal MasterSAF · até 1000 págs.</div>
-        <hr style="border:none; border-top:1px solid #1f2329; margin:0 0 1.2rem;">
+    <div style="background:#111318; padding:0 2rem;">
+        <div style="font-family:'IBM Plex Mono',monospace; font-size:0.58rem; letter-spacing:0.2em; text-transform:uppercase; color:#c6ff00; margin-bottom:0.5rem;">🔐 Credenciais de Acesso</div>
     </div>
     """, unsafe_allow_html=True)
-
-    # ── CREDENCIAIS (AGORA NO TOPO) ──
-    st.markdown('<div style="font-family:\'IBM Plex Mono\',monospace; font-size:0.58rem; letter-spacing:0.2em; text-transform:uppercase; color:#5a5e66; margin-bottom:0.5rem;">🔐 Credenciais de Acesso</div>', unsafe_allow_html=True)
-    usuario = st.text_input("Usuário", placeholder="login@empresa.com.br", key="usr")
-    senha   = st.text_input("Senha", type="password", placeholder="••••••••", key="pwd")
+    
+    with st.container():
+        st.markdown("""
+        <div style="background:#111318; padding:0 2rem;">
+        """, unsafe_allow_html=True)
+        usuario = st.text_input("Usuário", placeholder="login@empresa.com.br", key="usr")
+        senha   = st.text_input("Senha", type="password", placeholder="••••••••", key="pwd")
+        st.markdown("</div>", unsafe_allow_html=True)
 
     # ── PERÍODO ──
-    st.markdown('<hr style="border:none; border-top:1px solid #1f2329; margin:1.2rem 0 0.8rem;">', unsafe_allow_html=True)
-    st.markdown('<div style="font-family:\'IBM Plex Mono\',monospace; font-size:0.58rem; letter-spacing:0.2em; text-transform:uppercase; color:#5a5e66; margin-bottom:0.5rem;">📅 Período de Consulta</div>', unsafe_allow_html=True)
+    st.markdown("""
+    <div style="background:#111318; padding:0 2rem;">
+        <hr style="border:none; border-top:1px solid #1f2329; margin:1.2rem 0 0.8rem;">
+        <div style="font-family:'IBM Plex Mono',monospace; font-size:0.58rem; letter-spacing:0.2em; text-transform:uppercase; color:#5a5e66; margin-bottom:0.5rem;">📅 Período de Consulta</div>
+    </div>
+    """, unsafe_allow_html=True)
 
     col_a, col_b = st.columns(2)
     with col_a:
@@ -320,18 +341,31 @@ with left_col:
         data_fin = st.text_input("Data Final", value="08/05/2026", key="df")
 
     # ── PARÂMETROS ──
-    st.markdown('<hr style="border:none; border-top:1px solid #1f2329; margin:1.2rem 0 0.8rem;">', unsafe_allow_html=True)
-    st.markdown('<div style="font-family:\'IBM Plex Mono\',monospace; font-size:0.58rem; letter-spacing:0.2em; text-transform:uppercase; color:#5a5e66; margin-bottom:0.5rem;">⚙️ Parâmetros</div>', unsafe_allow_html=True)
+    st.markdown("""
+    <div style="background:#111318; padding:0 2rem;">
+        <hr style="border:none; border-top:1px solid #1f2329; margin:1.2rem 0 0.8rem;">
+        <div style="font-family:'IBM Plex Mono',monospace; font-size:0.58rem; letter-spacing:0.2em; text-transform:uppercase; color:#5a5e66; margin-bottom:0.5rem;">⚙️ Parâmetros</div>
+    </div>
+    """, unsafe_allow_html=True)
 
     qtd_loops = st.number_input("Qtd. Páginas (Loops)", min_value=1, max_value=1000, value=5)
 
     # ── PÓS-PROCESSAMENTO ──
-    st.markdown('<hr style="border:none; border-top:1px solid #1f2329; margin:1.2rem 0 0.8rem;">', unsafe_allow_html=True)
-    st.markdown('<div style="font-family:\'IBM Plex Mono\',monospace; font-size:0.58rem; letter-spacing:0.2em; text-transform:uppercase; color:#5a5e66; margin-bottom:0.5rem;">📊 Pós-Processamento</div>', unsafe_allow_html=True)
+    st.markdown("""
+    <div style="background:#111318; padding:0 2rem;">
+        <hr style="border:none; border-top:1px solid #1f2329; margin:1.2rem 0 0.8rem;">
+        <div style="font-family:'IBM Plex Mono',monospace; font-size:0.58rem; letter-spacing:0.2em; text-transform:uppercase; color:#5a5e66; margin-bottom:0.5rem;">📊 Pós-Processamento</div>
+    </div>
+    """, unsafe_allow_html=True)
 
     processar_xml = st.checkbox("Extrair ZIPs e processar XMLs para Excel", value=True, key="processar")
 
-    st.markdown("<br>", unsafe_allow_html=True)
+    st.markdown("""
+    <div style="background:#111318; padding:0 2rem 2rem;">
+        <br>
+    </div>
+    """, unsafe_allow_html=True)
+    
     iniciar = st.button("⚡ INICIAR AUTOMAÇÃO")
 
 # ─────────────────────────────────────────────
