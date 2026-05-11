@@ -25,7 +25,7 @@ st.set_page_config(
 )
 
 # ─────────────────────────────────────────────
-# CSS GLOBAL — Aesthetic: Editorial Industrial
+# CSS GLOBAL — DARK MODE INDUSTRIAL
 # ─────────────────────────────────────────────
 st.markdown("""
 <style>
@@ -34,41 +34,65 @@ st.markdown("""
 #MainMenu, footer, header, [data-testid="collapsedControl"] { visibility: hidden; }
 
 :root {
-    --ink:   #0d0f13;
-    --paper: #f5f2eb;
-    --cream: #ede9df;
-    --acid:  #c6ff00;
-    --rust:  #e84a2b;
-    --mist:  #9aa0ad;
-    --rule:  #d6d0c4;
-    --mono:  'IBM Plex Mono', monospace;
-    --sans:  'Syne', sans-serif;
+    --bg-primary: #0a0c10;
+    --bg-secondary: #111318;
+    --bg-tertiary: #161920;
+    --bg-input: #0d0f14;
+    --border-primary: #1f2329;
+    --border-secondary: #2a2e35;
+    --text-primary: #e4e6ea;
+    --text-secondary: #8b8f98;
+    --text-muted: #5a5e66;
+    --acid: #c6ff00;
+    --acid-hover: #d4ff1a;
+    --rust: #e84a2b;
+    --blue: #5b8fff;
+    --amber: #f59e0b;
+    --mono: 'IBM Plex Mono', monospace;
+    --sans: 'Syne', sans-serif;
 }
 
-html, body, [data-testid="stAppViewContainer"] {
-    background: var(--paper) !important;
-    color: var(--ink) !important;
+html, body, [data-testid="stAppViewContainer"], .stApp {
+    background: var(--bg-primary) !important;
+    color: var(--text-primary) !important;
     font-family: var(--sans) !important;
 }
+
 .block-container {
     padding: 0 !important;
     max-width: 100% !important;
 }
 
+/* ── SCROLLBAR ── */
+::-webkit-scrollbar {
+    width: 4px;
+    height: 4px;
+}
+::-webkit-scrollbar-track {
+    background: var(--bg-secondary);
+}
+::-webkit-scrollbar-thumb {
+    background: var(--border-secondary);
+    border-radius: 0;
+}
+::-webkit-scrollbar-thumb:hover {
+    background: var(--text-muted);
+}
+
 /* ── TOP BAR ── */
 .topbar {
-    background: var(--ink);
+    background: var(--bg-secondary);
     padding: 0.6rem 2.5rem;
     display: flex;
     align-items: center;
     justify-content: space-between;
-    border-bottom: 3px solid var(--acid);
+    border-bottom: 2px solid var(--acid);
 }
 .topbar-brand {
     font-family: 'IBM Plex Mono', monospace;
     font-size: 0.78rem;
     font-weight: 700;
-    color: var(--paper);
+    color: var(--text-primary);
     letter-spacing: 0.22em;
     text-transform: uppercase;
 }
@@ -76,37 +100,48 @@ html, body, [data-testid="stAppViewContainer"] {
 .topbar-meta {
     font-family: 'IBM Plex Mono', monospace;
     font-size: 0.62rem;
-    color: var(--mist);
+    color: var(--text-muted);
     letter-spacing: 0.12em;
 }
 
-/* ── PROGRESS ── */
+/* ── PROGRESS BAR ── */
+[data-testid="stProgress"] {
+    background: transparent !important;
+}
 [data-testid="stProgress"] > div {
-    background: #e0dbd0 !important;
+    background: var(--bg-tertiary) !important;
+    border: 1px solid var(--border-secondary) !important;
     border-radius: 0 !important;
-    height: 4px !important;
+    height: 6px !important;
+    padding: 0 !important;
 }
 [data-testid="stProgress"] > div > div {
-    background: var(--ink) !important;
+    background: var(--acid) !important;
     border-radius: 0 !important;
 }
 
 /* ── INPUTS ── */
 [data-testid="stTextInput"] input,
 [data-testid="stNumberInput"] input {
-    background: #0d0f13 !important;
-    border: 1px solid #2a2f3d !important;
+    background: var(--bg-input) !important;
+    border: 1px solid var(--border-primary) !important;
     border-radius: 0 !important;
-    color: #c8cdd6 !important;
+    color: var(--text-primary) !important;
     font-family: 'IBM Plex Mono', monospace !important;
     font-size: 0.78rem !important;
     letter-spacing: 0.04em !important;
     padding: 0.55rem 0.9rem !important;
+    caret-color: var(--acid) !important;
 }
 [data-testid="stTextInput"] input:focus,
 [data-testid="stNumberInput"] input:focus {
     border-color: var(--acid) !important;
     box-shadow: none !important;
+    outline: none !important;
+}
+[data-testid="stTextInput"] input::placeholder {
+    color: var(--text-muted) !important;
+    opacity: 0.5 !important;
 }
 [data-testid="stTextInput"] label,
 [data-testid="stNumberInput"] label {
@@ -114,16 +149,16 @@ html, body, [data-testid="stAppViewContainer"] {
     font-size: 0.58rem !important;
     letter-spacing: 0.18em !important;
     text-transform: uppercase !important;
-    color: #5a6070 !important;
+    color: var(--text-muted) !important;
 }
 
-/* Hide sidebar */
+/* ── SIDEBAR (hidden) ── */
 [data-testid="stSidebar"] { display: none !important; }
 
-/* ── BUTTON ── */
+/* ── MAIN BUTTON ── */
 .stButton button {
     background: var(--acid) !important;
-    color: var(--ink) !important;
+    color: #0a0c10 !important;
     font-family: 'IBM Plex Mono', monospace !important;
     font-weight: 700 !important;
     font-size: 0.75rem !important;
@@ -133,12 +168,17 @@ html, body, [data-testid="stAppViewContainer"] {
     border-radius: 0 !important;
     padding: 0.85rem 2rem !important;
     width: 100% !important;
-    transition: all 0.15s !important;
+    transition: all 0.15s ease !important;
     margin-top: 0.5rem !important;
+    cursor: pointer !important;
 }
 .stButton button:hover {
-    background: #d4ff1a !important;
+    background: var(--acid-hover) !important;
     transform: translateY(-1px) !important;
+    box-shadow: 0 4px 12px rgba(198, 255, 0, 0.15) !important;
+}
+.stButton button:active {
+    transform: translateY(0) !important;
 }
 
 /* ── DOWNLOAD BUTTON ── */
@@ -153,28 +193,117 @@ html, body, [data-testid="stAppViewContainer"] {
     padding: 0.75rem 1.5rem !important;
     text-transform: uppercase !important;
     margin-top: 1rem !important;
-    transition: all 0.15s !important;
+    transition: all 0.15s ease !important;
+    cursor: pointer !important;
 }
 .stDownloadButton button:hover {
     background: var(--acid) !important;
-    color: var(--ink) !important;
+    color: #0a0c10 !important;
+    box-shadow: 0 4px 12px rgba(198, 255, 0, 0.15) !important;
 }
 
-/* ── ALERTS ── */
+/* ── ALERTS / MESSAGES ── */
 [data-testid="stAlert"] {
     border-radius: 0 !important;
     font-family: 'IBM Plex Mono', monospace !important;
     font-size: 0.74rem !important;
-    background: var(--cream) !important;
+    background: var(--bg-tertiary) !important;
+    border: 1px solid var(--border-secondary) !important;
     border-left: 3px solid var(--rust) !important;
+    color: var(--text-primary) !important;
 }
 
-/* ── NUMBER INPUT stepper ── */
-[data-testid="stNumberInput"] button {
-    background: #1a1e2a !important;
-    border: 1px solid #2a2f3d !important;
+/* ── ERROR MESSAGE ── */
+.stException {
+    background: var(--bg-tertiary) !important;
+    border: 1px solid var(--rust) !important;
     border-radius: 0 !important;
-    color: #7a8494 !important;
+    color: var(--text-primary) !important;
+}
+
+/* ── NUMBER INPUT STEPPER ── */
+[data-testid="stNumberInput"] button {
+    background: var(--bg-tertiary) !important;
+    border: 1px solid var(--border-primary) !important;
+    border-radius: 0 !important;
+    color: var(--text-secondary) !important;
+    transition: all 0.15s ease !important;
+}
+[data-testid="stNumberInput"] button:hover {
+    background: var(--border-secondary) !important;
+    color: var(--text-primary) !important;
+}
+
+/* ── EXPANDER ── */
+[data-testid="stExpander"] {
+    background: var(--bg-secondary) !important;
+    border: 1px solid var(--border-primary) !important;
+    border-radius: 0 !important;
+}
+[data-testid="stExpander"] details summary {
+    color: var(--text-primary) !important;
+    font-family: 'IBM Plex Mono', monospace !important;
+}
+
+/* ── RADIO / CHECKBOX ── */
+[data-testid="stRadio"] label,
+[data-testid="stCheckbox"] label {
+    color: var(--text-primary) !important;
+}
+
+/* ── SELECT BOX ── */
+[data-testid="stSelectbox"] select {
+    background: var(--bg-input) !important;
+    border: 1px solid var(--border-primary) !important;
+    border-radius: 0 !important;
+    color: var(--text-primary) !important;
+    font-family: 'IBM Plex Mono', monospace !important;
+}
+
+/* ── DATAFRAME / TABLE ── */
+[data-testid="stTable"] {
+    background: var(--bg-secondary) !important;
+    border: 1px solid var(--border-primary) !important;
+    border-radius: 0 !important;
+}
+[data-testid="stTable"] th {
+    background: var(--bg-tertiary) !important;
+    color: var(--text-primary) !important;
+    font-family: 'IBM Plex Mono', monospace !important;
+    border-bottom: 2px solid var(--acid) !important;
+}
+[data-testid="stTable"] td {
+    color: var(--text-secondary) !important;
+    font-family: 'IBM Plex Mono', monospace !important;
+    border-bottom: 1px solid var(--border-primary) !important;
+}
+
+/* ── TOOLTIP ── */
+[data-testid="stTooltip"] {
+    background: var(--bg-tertiary) !important;
+    border: 1px solid var(--border-secondary) !important;
+    border-radius: 0 !important;
+    color: var(--text-primary) !important;
+    font-family: 'IBM Plex Mono', monospace !important;
+}
+
+/* ── MARKDOWN CODE ── */
+code {
+    background: var(--bg-tertiary) !important;
+    color: var(--acid) !important;
+    border: 1px solid var(--border-primary) !important;
+    border-radius: 0 !important;
+    font-family: 'IBM Plex Mono', monospace !important;
+    padding: 0.2rem 0.5rem !important;
+}
+
+/* ── LINKS ── */
+a {
+    color: var(--acid) !important;
+    text-decoration: none !important;
+}
+a:hover {
+    text-decoration: underline !important;
 }
 </style>
 """, unsafe_allow_html=True)
@@ -195,24 +324,24 @@ st.markdown("""
 left_col, right_col = st.columns([1.05, 2], gap="small")
 
 # ─────────────────────────────────────────────
-# LEFT PANEL — Form
+# LEFT PANEL — Form (Dark)
 # ─────────────────────────────────────────────
 with left_col:
     st.markdown("""
-    <div style="background:#0d0f13; padding:2.2rem 2rem 1rem; border-right:1px solid #1a1e2a;">
+    <div style="background:#111318; padding:2.2rem 2rem 1rem; border-right:1px solid #1f2329; min-height:100vh;">
         <div style="font-family:'IBM Plex Mono',monospace; font-size:0.58rem; letter-spacing:0.25em; text-transform:uppercase; color:#c6ff00; margin-bottom:0.3rem;">Módulo de Captura</div>
-        <div style="font-family:'Syne',sans-serif; font-size:1.55rem; font-weight:800; color:#f5f2eb; line-height:1.1; margin-bottom:0.4rem;">Captura<br>em Massa</div>
-        <div style="font-family:'IBM Plex Mono',monospace; font-size:0.66rem; color:#9aa0ad; line-height:1.6; margin-bottom:1.6rem;">Extração automatizada de CT-e<br>via portal MasterSAF · até 1000 págs.</div>
-        <hr style="border:none; border-top:1px solid #1f2430; margin:0 0 1.2rem;">
-        <div style="font-family:'IBM Plex Mono',monospace; font-size:0.58rem; letter-spacing:0.2em; text-transform:uppercase; color:#5a6070; margin-bottom:0.5rem;">Credenciais de Acesso</div>
+        <div style="font-family:'Syne',sans-serif; font-size:1.55rem; font-weight:800; color:#e4e6ea; line-height:1.1; margin-bottom:0.4rem;">Captura<br>em Massa</div>
+        <div style="font-family:'IBM Plex Mono',monospace; font-size:0.66rem; color:#8b8f98; line-height:1.6; margin-bottom:1.6rem;">Extração automatizada de CT-e<br>via portal MasterSAF · até 1000 págs.</div>
+        <hr style="border:none; border-top:1px solid #1f2329; margin:0 0 1.2rem;">
+        <div style="font-family:'IBM Plex Mono',monospace; font-size:0.58rem; letter-spacing:0.2em; text-transform:uppercase; color:#5a5e66; margin-bottom:0.5rem;">Credenciais de Acesso</div>
     </div>
     """, unsafe_allow_html=True)
 
     usuario = st.text_input("Usuário", placeholder="login@empresa.com.br", key="usr")
     senha   = st.text_input("Senha", type="password", placeholder="••••••••", key="pwd")
 
-    st.markdown('<hr style="border:none; border-top:1px solid #1f2430; margin:1.2rem 0 0.8rem;">', unsafe_allow_html=True)
-    st.markdown('<div style="font-family:\'IBM Plex Mono\',monospace; font-size:0.58rem; letter-spacing:0.2em; text-transform:uppercase; color:#5a6070; margin-bottom:0.5rem;">Período de Consulta</div>', unsafe_allow_html=True)
+    st.markdown('<hr style="border:none; border-top:1px solid #1f2329; margin:1.2rem 0 0.8rem;">', unsafe_allow_html=True)
+    st.markdown('<div style="font-family:\'IBM Plex Mono\',monospace; font-size:0.58rem; letter-spacing:0.2em; text-transform:uppercase; color:#5a5e66; margin-bottom:0.5rem;">Período de Consulta</div>', unsafe_allow_html=True)
 
     col_a, col_b = st.columns(2)
     with col_a:
@@ -220,8 +349,8 @@ with left_col:
     with col_b:
         data_fin = st.text_input("Data Final", value="08/05/2026", key="df")
 
-    st.markdown('<hr style="border:none; border-top:1px solid #1f2430; margin:1.2rem 0 0.8rem;">', unsafe_allow_html=True)
-    st.markdown('<div style="font-family:\'IBM Plex Mono\',monospace; font-size:0.58rem; letter-spacing:0.2em; text-transform:uppercase; color:#5a6070; margin-bottom:0.5rem;">Parâmetros</div>', unsafe_allow_html=True)
+    st.markdown('<hr style="border:none; border-top:1px solid #1f2329; margin:1.2rem 0 0.8rem;">', unsafe_allow_html=True)
+    st.markdown('<div style="font-family:\'IBM Plex Mono\',monospace; font-size:0.58rem; letter-spacing:0.2em; text-transform:uppercase; color:#5a5e66; margin-bottom:0.5rem;">Parâmetros</div>', unsafe_allow_html=True)
 
     qtd_loops = st.number_input("Qtd. Páginas (Loops)", min_value=1, max_value=1000, value=5)
 
@@ -229,14 +358,14 @@ with left_col:
     iniciar = st.button("⚡ INICIAR AUTOMAÇÃO")
 
 # ─────────────────────────────────────────────
-# RIGHT PANEL — Console
+# RIGHT PANEL — Console (Dark)
 # ─────────────────────────────────────────────
 with right_col:
     st.markdown("""
     <div style="padding:2.4rem 2.8rem 1.5rem;">
-        <div style="display:flex; align-items:baseline; gap:1rem; margin-bottom:1.8rem; padding-bottom:1.2rem; border-bottom:1px solid #d6d0c4;">
-            <div style="font-family:'Syne',sans-serif; font-size:1rem; font-weight:800; color:#0d0f13; text-transform:uppercase; letter-spacing:0.06em;">Console de Execução</div>
-            <div style="font-family:'IBM Plex Mono',monospace; font-size:0.6rem; color:#9aa0ad; letter-spacing:0.12em;">REAL-TIME MONITOR</div>
+        <div style="display:flex; align-items:baseline; gap:1rem; margin-bottom:1.8rem; padding-bottom:1.2rem; border-bottom:1px solid #1f2329;">
+            <div style="font-family:'Syne',sans-serif; font-size:1rem; font-weight:800; color:#e4e6ea; text-transform:uppercase; letter-spacing:0.06em;">Console de Execução</div>
+            <div style="font-family:'IBM Plex Mono',monospace; font-size:0.6rem; color:#5a5e66; letter-spacing:0.12em;">REAL-TIME MONITOR</div>
         </div>
     </div>
     """, unsafe_allow_html=True)
@@ -245,21 +374,21 @@ with right_col:
     sc1, sc2, sc3 = st.columns(3)
     with sc1:
         st.markdown("""
-        <div style="background:#f5f2eb; border:1px solid #d6d0c4; border-top:3px solid #0d0f13; padding:1.2rem 1.4rem; margin-bottom:1.5rem;">
-            <div style="font-family:'IBM Plex Mono',monospace; font-size:1.8rem; font-weight:700; color:#0d0f13; line-height:1;">00</div>
-            <div style="font-family:'IBM Plex Mono',monospace; font-size:0.58rem; letter-spacing:0.15em; text-transform:uppercase; color:#9aa0ad; margin-top:0.4rem;">Págs. Processadas</div>
+        <div style="background:#111318; border:1px solid #1f2329; border-top:2px solid #e4e6ea; padding:1.2rem 1.4rem; margin-bottom:1.5rem;">
+            <div style="font-family:'IBM Plex Mono',monospace; font-size:1.8rem; font-weight:700; color:#e4e6ea; line-height:1;">00</div>
+            <div style="font-family:'IBM Plex Mono',monospace; font-size:0.58rem; letter-spacing:0.15em; text-transform:uppercase; color:#5a5e66; margin-top:0.4rem;">Págs. Processadas</div>
         </div>""", unsafe_allow_html=True)
     with sc2:
         st.markdown("""
-        <div style="background:#f5f2eb; border:1px solid #d6d0c4; border-top:3px solid #c6ff00; padding:1.2rem 1.4rem; margin-bottom:1.5rem;">
-            <div style="font-family:'IBM Plex Mono',monospace; font-size:1.8rem; font-weight:700; color:#0d0f13; line-height:1;">000</div>
-            <div style="font-family:'IBM Plex Mono',monospace; font-size:0.58rem; letter-spacing:0.15em; text-transform:uppercase; color:#9aa0ad; margin-top:0.4rem;">Arquivos Capturados</div>
+        <div style="background:#111318; border:1px solid #1f2329; border-top:2px solid #c6ff00; padding:1.2rem 1.4rem; margin-bottom:1.5rem;">
+            <div style="font-family:'IBM Plex Mono',monospace; font-size:1.8rem; font-weight:700; color:#e4e6ea; line-height:1;">000</div>
+            <div style="font-family:'IBM Plex Mono',monospace; font-size:0.58rem; letter-spacing:0.15em; text-transform:uppercase; color:#5a5e66; margin-top:0.4rem;">Arquivos Capturados</div>
         </div>""", unsafe_allow_html=True)
     with sc3:
         st.markdown("""
-        <div style="background:#f5f2eb; border:1px solid #d6d0c4; border-top:3px solid #e84a2b; padding:1.2rem 1.4rem; margin-bottom:1.5rem;">
+        <div style="background:#111318; border:1px solid #1f2329; border-top:2px solid #e84a2b; padding:1.2rem 1.4rem; margin-bottom:1.5rem;">
             <div style="font-family:'IBM Plex Mono',monospace; font-size:1.8rem; font-weight:700; color:#e84a2b; line-height:1;">IDLE</div>
-            <div style="font-family:'IBM Plex Mono',monospace; font-size:0.58rem; letter-spacing:0.15em; text-transform:uppercase; color:#9aa0ad; margin-top:0.4rem;">Status do Sistema</div>
+            <div style="font-family:'IBM Plex Mono',monospace; font-size:0.58rem; letter-spacing:0.15em; text-transform:uppercase; color:#5a5e66; margin-top:0.4rem;">Status do Sistema</div>
         </div>""", unsafe_allow_html=True)
 
     log_placeholder      = st.empty()
@@ -267,12 +396,12 @@ with right_col:
     download_placeholder = st.empty()
 
     log_placeholder.markdown("""
-    <div style="background:#0d0f13; border:1px solid #1f2430; border-top:3px solid #c6ff00; padding:1.2rem 1.5rem; min-height:200px;">
-        <div style="font-family:'IBM Plex Mono',monospace; font-size:0.6rem; letter-spacing:0.2em; text-transform:uppercase; color:#3a4050; margin-bottom:1rem; display:flex; align-items:center; gap:0.6rem;">
-            <span style="width:6px;height:6px;border-radius:50%;background:#3a4050;display:inline-block;"></span>
+    <div style="background:#0d0f14; border:1px solid #1f2329; border-top:2px solid #c6ff00; padding:1.2rem 1.5rem; min-height:200px;">
+        <div style="font-family:'IBM Plex Mono',monospace; font-size:0.6rem; letter-spacing:0.2em; text-transform:uppercase; color:#5a5e66; margin-bottom:1rem; display:flex; align-items:center; gap:0.6rem;">
+            <span style="width:6px;height:6px;border-radius:50%;background:#2a2e35;display:inline-block;"></span>
             SYSTEM LOG — AGUARDANDO INICIALIZAÇÃO
         </div>
-        <div style="font-family:'IBM Plex Mono',monospace; font-size:0.7rem; color:#2a3040; line-height:1.9;">
+        <div style="font-family:'IBM Plex Mono',monospace; font-size:0.7rem; color:#3a3e46; line-height:1.9;">
             [ — ] Sistema pronto. Configure as credenciais e clique em iniciar.<br>
             [ — ] Chrome/Selenium em standby (webdriver-manager).<br>
             [ — ] Diretório de saída: /tmp/downloads
@@ -306,11 +435,9 @@ def get_chrome_version(binary_path):
             text=True,
             timeout=5
         )
-        # Procura por padrão de versão: 148.0.7778.96
         version_match = re.search(r'(\d+)\.(\d+)\.(\d+)\.(\d+)', result.stdout)
         if version_match:
             return version_match.group(0)
-        # Fallback para formato alternativo: 148
         version_match = re.search(r'(\d+)', result.stdout)
         if version_match:
             return version_match.group(0)
@@ -339,7 +466,7 @@ def find_chrome_binary():
             "/snap/bin/chromium",
             "/usr/lib/chromium/chromium",
         ]
-    elif system == "Darwin":  # macOS
+    elif system == "Darwin":
         possible_paths = [
             "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
             os.path.expanduser("~/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"),
@@ -348,12 +475,10 @@ def find_chrome_binary():
     else:
         return None
     
-    # Verifica caminhos conhecidos
     for path in possible_paths:
         if os.path.isfile(path):
             return path
     
-    # Busca usando comandos do sistema
     if system != "Windows":
         for browser in ["google-chrome", "google-chrome-stable", "chromium-browser", "chromium"]:
             try:
@@ -389,7 +514,6 @@ def get_driver(download_path, chrome_binary=None, chrome_version=None):
     """Inicializa o ChromeDriver compatível com a versão do browser"""
     chrome_options = Options()
     
-    # Configurações headless e performance
     chrome_options.add_argument("--headless=new")
     chrome_options.add_argument("--window-size=1920x1080")
     chrome_options.add_argument("--no-sandbox")
@@ -402,7 +526,6 @@ def get_driver(download_path, chrome_binary=None, chrome_version=None):
     chrome_options.add_argument("--disable-blink-features=AutomationControlled")
     chrome_options.add_argument("--remote-debugging-port=0")
     
-    # Preferências de download
     prefs = {
         "download.default_directory": download_path,
         "download.prompt_for_download": False,
@@ -415,31 +538,24 @@ def get_driver(download_path, chrome_binary=None, chrome_version=None):
     chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
     chrome_options.add_experimental_option("useAutomationExtension", False)
     
-    # Define o binário do browser
     if chrome_binary:
         chrome_options.binary_location = chrome_binary
     
-    # Limpa cache antigo do webdriver-manager
     clear_wdm_cache()
     
-    # Prepara parâmetros para o ChromeDriverManager
     driver_kwargs = {}
     
-    # Detecta se é Chromium
     if chrome_binary and "chromium" in os.path.basename(chrome_binary).lower():
         driver_kwargs["chrome_type"] = ChromeType.CHROMIUM
     else:
         driver_kwargs["chrome_type"] = ChromeType.GOOGLE
     
-    # Se temos a versão, extrai o major version e configura
     if chrome_version:
         major_version = chrome_version.split('.')[0]
         driver_kwargs["driver_version"] = major_version
     
-    # Instala o driver compatível
     driver_path = ChromeDriverManager(**driver_kwargs).install()
     
-    # Cria o serviço e o driver
     service = Service(driver_path)
     driver = webdriver.Chrome(service=service, options=chrome_options)
     
@@ -447,15 +563,16 @@ def get_driver(download_path, chrome_binary=None, chrome_version=None):
 
 
 def render_log(lines, active=True):
-    """Renderiza o log no estilo terminal"""
-    dot_color   = "#c6ff00" if active else "#3a4050"
+    """Renderiza o log no estilo terminal dark"""
+    dot_color   = "#c6ff00" if active else "#2a2e35"
     status_text = "EM EXECUÇÃO" if active else "CONCLUÍDO"
+    status_color = "#c6ff00" if active else "#5a5e66"
     rows_html   = "".join(lines)
     return f"""
-    <div style="background:#0d0f13; border:1px solid #1f2430; border-top:3px solid #c6ff00;
+    <div style="background:#0d0f14; border:1px solid #1f2329; border-top:2px solid #c6ff00;
                 padding:1.2rem 1.5rem; min-height:200px;">
         <div style="font-family:'IBM Plex Mono',monospace; font-size:0.6rem; letter-spacing:0.2em;
-                    text-transform:uppercase; color:#9aa0ad; margin-bottom:1rem;
+                    text-transform:uppercase; color:{status_color}; margin-bottom:1rem;
                     display:flex; align-items:center; gap:0.6rem;">
             <span style="width:6px;height:6px;border-radius:50%;background:{dot_color};
                          display:inline-block;"></span>
@@ -473,22 +590,18 @@ def render_log(lines, active=True):
 # ─────────────────────────────────────────────
 
 if iniciar:
-    # Validações iniciais
     if not usuario or not senha:
         with right_col:
             st.error("⚠️  Preencha usuário e senha para continuar.")
     else:
-        # Prepara diretório de downloads
         dl_path = "/tmp/downloads"
         if os.path.exists(dl_path):
             shutil.rmtree(dl_path)
         os.makedirs(dl_path, exist_ok=True)
         
-        # Inicializa lista de logs
         logs = []
         
         def log(msg, kind="dim"):
-            """Adiciona mensagem ao log e atualiza o display"""
             colors   = {
                 "ok": "#c6ff00",
                 "err": "#e84a2b",
@@ -514,7 +627,6 @@ if iniciar:
         driver = None
         
         try:
-            # ── ETAPA 1: Localizar browser ──
             log("Procurando Chrome/Chromium no sistema...", "info")
             chrome_binary = find_chrome_binary()
             
@@ -526,7 +638,6 @@ if iniciar:
             
             log(f"Browser encontrado: {chrome_binary}", "info")
             
-            # ── ETAPA 2: Detectar versão ──
             chrome_version = get_chrome_version(chrome_binary)
             
             if chrome_version:
@@ -534,21 +645,17 @@ if iniciar:
             else:
                 log("Não foi possível detectar a versão do browser", "warn")
             
-            # ── ETAPA 3: Inicializar driver ──
             log("Inicializando ChromeDriver (baixando versão compatível)...", "info")
             driver = get_driver(dl_path, chrome_binary, chrome_version)
             log("ChromeDriver inicializado com sucesso!", "ok")
             
-            # ── ETAPA 4: Login no MasterSAF ──
             log("Acessando portal MasterSAF...", "info")
             driver.get("https://p.dfe.mastersaf.com.br/mvc/login")
             time.sleep(3)
             
-            # Preenche credenciais
             driver.find_element(By.XPATH, '//*[@id="nomeusuario"]').send_keys(usuario)
             driver.find_element(By.XPATH, '//*[@id="senha"]').send_keys(senha)
             
-            # Clica no botão Enter
             driver.execute_script(
                 "arguments[0].click();",
                 driver.find_element(By.XPATH, '//*[@id="enter"]')
@@ -556,7 +663,6 @@ if iniciar:
             time.sleep(5)
             log("Autenticação realizada com sucesso.", "ok")
             
-            # ── ETAPA 5: Navegar para listagem CT-e ──
             log("Navegando até Listagem de CT-es (Receptor)...", "info")
             driver.execute_script(
                 "arguments[0].click();",
@@ -564,20 +670,16 @@ if iniciar:
             )
             time.sleep(4)
             
-            # ── ETAPA 6: Configurar período ──
             log(f"Configurando período: {data_ini} → {data_fin}", "info")
             
-            # Data inicial
             el_ini = driver.find_element(By.XPATH, '//*[@id="consultaDataInicial"]')
             el_ini.send_keys(Keys.CONTROL, 'a', Keys.BACKSPACE)
             el_ini.send_keys(data_ini)
             
-            # Data final
             el_fin = driver.find_element(By.XPATH, '//*[@id="consultaDataFinal"]')
             el_fin.send_keys(Keys.CONTROL, 'a', Keys.BACKSPACE)
             el_fin.send_keys(data_fin)
             
-            # Atualizar listagem
             driver.execute_script(
                 "arguments[0].click();",
                 driver.find_element(By.XPATH, '//*[@id="listagem_atualiza"]')
@@ -585,7 +687,6 @@ if iniciar:
             time.sleep(4)
             log("Base de dados atualizada com o período selecionado.", "ok")
             
-            # ── ETAPA 7: Selecionar 100 registros por página ──
             log("Configurando exibição: 100 registros por página...", "info")
             driver.find_element(
                 By.XPATH,
@@ -593,7 +694,6 @@ if iniciar:
             ).click()
             time.sleep(4)
             
-            # ── ETAPA 8: Loop de captura ──
             total_paginas = int(qtd_loops)
             log(f"Iniciando captura em massa: {total_paginas} página(s)...", "info")
             
@@ -601,7 +701,6 @@ if iniciar:
                 pagina_atual = i + 1
                 log(f"Processando página {pagina_atual}/{total_paginas}...", "dim")
                 
-                # 1. Selecionar todos os checkboxes
                 driver.execute_script(
                     "arguments[0].click();",
                     driver.find_element(
@@ -610,14 +709,12 @@ if iniciar:
                 )
                 time.sleep(1)
                 
-                # 2. Abrir menu de download múltiplo
                 driver.execute_script(
                     "arguments[0].click();",
                     driver.find_element(By.XPATH, '//*[@id="xml_multiplos"]/h3')
                 )
                 time.sleep(1)
                 
-                # 3. Clicar em "Download em Massa XML"
                 driver.execute_script(
                     "arguments[0].click();",
                     driver.find_element(By.XPATH, '//*[@id="downloadEmMassaXml"]')
@@ -625,7 +722,6 @@ if iniciar:
                 log(f"Download da página {pagina_atual} iniciado...", "dim")
                 time.sleep(8)
                 
-                # 4. Desmarcar todos
                 driver.execute_script(
                     "arguments[0].click();",
                     driver.find_element(
@@ -634,7 +730,6 @@ if iniciar:
                 )
                 time.sleep(1)
                 
-                # 5. Avançar para próxima página (se não for a última)
                 if pagina_atual < total_paginas:
                     driver.execute_script(
                         "arguments[0].click();",
@@ -642,12 +737,10 @@ if iniciar:
                     )
                     time.sleep(3)
                 
-                # Atualizar barra de progresso
                 progress_placeholder.progress(pagina_atual / total_paginas)
                 log(f"Página {pagina_atual} concluída.", "ok")
                 time.sleep(2)
             
-            # ── ETAPA 9: Compactar arquivos ──
             log("Compactando arquivos XML em ZIP...", "info")
             
             zip_filename = "/tmp/resultado.zip"
@@ -662,11 +755,9 @@ if iniciar:
             
             log(f"Compactação concluída: {total_arquivos} arquivo(s).", "ok")
             
-            # ── ETAPA 10: Finalizar ──
             log("Processo finalizado com sucesso!", "ok")
             log_placeholder.markdown(render_log(logs, active=False), unsafe_allow_html=True)
             
-            # Botão de download
             with open(zip_filename, "rb") as f:
                 download_placeholder.download_button(
                     f"📥  BAIXAR {total_arquivos} ARQUIVOS XML (.ZIP)",
@@ -675,7 +766,6 @@ if iniciar:
                     "application/zip",
                 )
             
-            # Fechar driver
             driver.quit()
             driver = None
             
@@ -683,7 +773,6 @@ if iniciar:
             error_msg = str(e)
             log(f"Erro crítico: {error_msg}", "err")
             
-            # Sugestões baseadas no erro
             if "chromedriver" in error_msg.lower() or "chrome" in error_msg.lower():
                 log("Sugestão: Execute 'sudo apt-get update && sudo apt-get install -y chromium-browser'", "warn")
                 log("Depois reinicie o aplicativo Streamlit.", "warn")
