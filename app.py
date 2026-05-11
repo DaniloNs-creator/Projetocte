@@ -7,11 +7,9 @@ import re
 import subprocess
 import platform
 import tempfile
-import threading
 from pathlib import Path
 import xml.etree.ElementTree as ET
 import pandas as pd
-from io import BytesIO
 from datetime import datetime
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
@@ -281,67 +279,6 @@ a:hover { text-decoration: underline !important; }
     color: var(--text-muted) !important;
     font-family: 'IBM Plex Mono', monospace !important;
 }
-
-/* ── Stat Cards ── */
-.stat-row {
-    display: grid;
-    grid-template-columns: repeat(4, 1fr);
-    gap: 0.8rem;
-    margin: 1rem 0;
-}
-.stat-card {
-    background: #111318;
-    border: 1px solid #1f2329;
-    border-radius: 0;
-    padding: 1rem 1.2rem;
-    position: relative;
-    overflow: hidden;
-}
-.stat-card::before {
-    content: '';
-    position: absolute;
-    top: 0;
-    left: 0;
-    right: 0;
-    height: 2px;
-}
-.stat-card.green::before { background: var(--acid); }
-.stat-card.blue::before { background: var(--blue); }
-.stat-card.rust::before { background: var(--rust); }
-.stat-card.white::before { background: var(--text-primary); }
-.stat-label {
-    font-family: 'IBM Plex Mono', monospace;
-    font-size: 0.58rem;
-    letter-spacing: 0.15em;
-    color: #5a5e66;
-    text-transform: uppercase;
-    margin-bottom: 0.3rem;
-}
-.stat-value {
-    font-family: 'IBM Plex Mono', monospace;
-    font-size: 1.5rem;
-    font-weight: 700;
-    color: #eef2ff;
-}
-.stat-value.green { color: var(--acid) !important; }
-.stat-value.blue { color: var(--blue) !important; }
-.stat-value.rust { color: var(--rust) !important; }
-
-/* ── LOG BOX ── */
-.log-box {
-    background: #0d0f14;
-    border: 1px solid #1f2329;
-    border-top: 2px solid var(--acid);
-    padding: 1.2rem 1.5rem;
-    font-family: 'IBM Plex Mono', monospace;
-    font-size: 0.7rem;
-    color: #8896a8;
-    max-height: 400px;
-    overflow-y: auto;
-    line-height: 1.9;
-    white-space: pre-wrap;
-    word-break: break-all;
-}
 </style>
 """, unsafe_allow_html=True)
 
@@ -351,21 +288,9 @@ a:hover { text-decoration: underline !important; }
 st.markdown("""
 <div class="topbar">
     <div class="topbar-brand">MASTER<span>SAF</span> &nbsp;// XML AUTOMATION ENGINE</div>
-    <div class="topbar-meta">v4.0.0 &nbsp;·&nbsp; CAPTURA EM MASSA &nbsp;·&nbsp; MÓDULO FISCAL</div>
+    <div class="topbar-meta">v3.0.0 &nbsp;·&nbsp; CT-e RECEPTOR &nbsp;·&nbsp; MÓDULO FISCAL</div>
 </div>
 """, unsafe_allow_html=True)
-
-# ─────────────────────────────────────────────
-# ESTADO DA SESSÃO
-# ─────────────────────────────────────────────
-for k, v in {
-    "running": False, "done": False, "error_msg": "", 
-    "page_atual": 0, "page_total": 0, "status_msg": "", 
-    "stage": "idle", "xml_count": 0, "excel_bytes": None, 
-    "logs": [], "arquivos_capturados": 0
-}.items():
-    if k not in st.session_state:
-        st.session_state[k] = v
 
 # ─────────────────────────────────────────────
 # LAYOUT — Two columns
@@ -382,7 +307,7 @@ with left_col:
         <div style="background:#111318; padding:2.2rem 2rem 0.5rem; border-right:1px solid #1f2329;">
             <div style="font-family:'IBM Plex Mono',monospace; font-size:0.58rem; letter-spacing:0.25em; text-transform:uppercase; color:#c6ff00; margin-bottom:0.3rem;">Módulo de Captura</div>
             <div style="font-family:'Syne',sans-serif; font-size:1.55rem; font-weight:800; color:#e4e6ea; line-height:1.1; margin-bottom:0.4rem;">Captura<br>em Massa</div>
-            <div style="font-family:'IBM Plex Mono',monospace; font-size:0.66rem; color:#8b8f98; line-height:1.6; margin-bottom:1.2rem;">Extração automatizada de XMLs<br>via portal MasterSAF · até 1000 págs.</div>
+            <div style="font-family:'IBM Plex Mono',monospace; font-size:0.66rem; color:#8b8f98; line-height:1.6; margin-bottom:1.2rem;">Extração automatizada de CT-e<br>via portal MasterSAF · até 1000 págs.</div>
         </div>
         """, unsafe_allow_html=True)
 
@@ -397,8 +322,8 @@ with left_col:
         st.markdown("""
         <div style="background:#111318; padding:0 2rem;">
         """, unsafe_allow_html=True)
-        usuario = st.text_input("Usuário", placeholder="login@empresa.com.br", key="usr", disabled=st.session_state.running)
-        senha = st.text_input("Senha", type="password", placeholder="••••••••", key="pwd", disabled=st.session_state.running)
+        usuario = st.text_input("Usuário", placeholder="login@empresa.com.br", key="usr")
+        senha   = st.text_input("Senha", type="password", placeholder="••••••••", key="pwd")
         st.markdown("</div>", unsafe_allow_html=True)
 
     # ── PERÍODO ──
@@ -411,9 +336,9 @@ with left_col:
 
     col_a, col_b = st.columns(2)
     with col_a:
-        data_ini = st.text_input("Data Inicial", value="08/05/2026", key="di", disabled=st.session_state.running)
+        data_ini = st.text_input("Data Inicial", value="08/05/2026", key="di")
     with col_b:
-        data_fin = st.text_input("Data Final", value="08/05/2026", key="df", disabled=st.session_state.running)
+        data_fin = st.text_input("Data Final", value="08/05/2026", key="df")
 
     # ── PARÂMETROS ──
     st.markdown("""
@@ -423,7 +348,7 @@ with left_col:
     </div>
     """, unsafe_allow_html=True)
 
-    qtd_loops = st.number_input("Qtd. Páginas (Loops)", min_value=1, max_value=1000, value=5, disabled=st.session_state.running)
+    qtd_loops = st.number_input("Qtd. Páginas (Loops)", min_value=1, max_value=1000, value=5)
 
     # ── PÓS-PROCESSAMENTO ──
     st.markdown("""
@@ -433,7 +358,7 @@ with left_col:
     </div>
     """, unsafe_allow_html=True)
 
-    processar_xml = st.checkbox("Extrair ZIPs e processar XMLs para Excel", value=True, key="processar", disabled=st.session_state.running)
+    processar_xml = st.checkbox("Extrair ZIPs e processar XMLs para Excel", value=True, key="processar")
 
     st.markdown("""
     <div style="background:#111318; padding:0 2rem 2rem;">
@@ -441,11 +366,7 @@ with left_col:
     </div>
     """, unsafe_allow_html=True)
     
-    if not st.session_state.running:
-        iniciar = st.button("⚡ INICIAR AUTOMAÇÃO")
-    else:
-        st.button("⏳ PROCESSANDO...", disabled=True)
-        iniciar = False
+    iniciar = st.button("⚡ INICIAR AUTOMAÇÃO")
 
 # ─────────────────────────────────────────────
 # RIGHT PANEL — Console (Dark)
@@ -460,158 +381,231 @@ with right_col:
     </div>
     """, unsafe_allow_html=True)
 
-    # Stat cards dinâmicos
-    sc1, sc2, sc3, sc4 = st.columns(4)
-    
+    # Stat cards
+    sc1, sc2, sc3 = st.columns(3)
     with sc1:
-        pag_atual = st.session_state.page_atual
-        pag_total = st.session_state.page_total or 0
-        st.markdown(f"""
-        <div class="stat-card green">
-            <div class="stat-label">Págs. Processadas</div>
-            <div class="stat-value green">{pag_atual:02d}</div>
+        st.markdown("""
+        <div style="background:#111318; border:1px solid #1f2329; border-top:2px solid #e4e6ea; padding:1.2rem 1.4rem; margin-bottom:1.5rem;">
+            <div style="font-family:'IBM Plex Mono',monospace; font-size:1.8rem; font-weight:700; color:#e4e6ea; line-height:1;">00</div>
+            <div style="font-family:'IBM Plex Mono',monospace; font-size:0.58rem; letter-spacing:0.15em; text-transform:uppercase; color:#5a5e66; margin-top:0.4rem;">Págs. Processadas</div>
         </div>""", unsafe_allow_html=True)
-    
     with sc2:
-        st.markdown(f"""
-        <div class="stat-card blue">
-            <div class="stat-label">Total Programado</div>
-            <div class="stat-value blue">{pag_total:03d}</div>
+        st.markdown("""
+        <div style="background:#111318; border:1px solid #1f2329; border-top:2px solid #c6ff00; padding:1.2rem 1.4rem; margin-bottom:1.5rem;">
+            <div style="font-family:'IBM Plex Mono',monospace; font-size:1.8rem; font-weight:700; color:#e4e6ea; line-height:1;">000</div>
+            <div style="font-family:'IBM Plex Mono',monospace; font-size:0.58rem; letter-spacing:0.15em; text-transform:uppercase; color:#5a5e66; margin-top:0.4rem;">Arquivos Capturados</div>
         </div>""", unsafe_allow_html=True)
-    
     with sc3:
-        st.markdown(f"""
-        <div class="stat-card white">
-            <div class="stat-label">Arquivos Capturados</div>
-            <div class="stat-value">{st.session_state.arquivos_capturados:03d}</div>
-        </div>""", unsafe_allow_html=True)
-    
-    with sc4:
-        status_text = st.session_state.stage.upper() if st.session_state.stage != "idle" else "IDLE"
-        status_color = "rust" if st.session_state.error_msg else ("green" if st.session_state.stage == "done" else "white")
-        st.markdown(f"""
-        <div class="stat-card rust">
-            <div class="stat-label">Status do Sistema</div>
-            <div class="stat-value rust" style="font-size:0.9rem; padding-top:0.4rem;">{status_text}</div>
+        st.markdown("""
+        <div style="background:#111318; border:1px solid #1f2329; border-top:2px solid #e84a2b; padding:1.2rem 1.4rem; margin-bottom:1.5rem;">
+            <div style="font-family:'IBM Plex Mono',monospace; font-size:1.8rem; font-weight:700; color:#e84a2b; line-height:1;">IDLE</div>
+            <div style="font-family:'IBM Plex Mono',monospace; font-size:0.58rem; letter-spacing:0.15em; text-transform:uppercase; color:#5a5e66; margin-top:0.4rem;">Status do Sistema</div>
         </div>""", unsafe_allow_html=True)
 
-    # Progress bar
-    if st.session_state.running or st.session_state.done:
-        total = st.session_state.page_total or 1
-        atual = st.session_state.page_atual
-        stage = st.session_state.stage
-        
-        pct = {"download": (atual/total)*0.65, "extract": 0.78, "excel": 0.92, "done": 1.0}.get(stage, 0.0)
-        st.progress(pct)
-    
-    # Alertas
-    if st.session_state.error_msg:
-        st.error(f"❌ {st.session_state.error_msg}")
-    elif st.session_state.stage == "done" and st.session_state.excel_bytes:
-        st.success(f"✅ {st.session_state.status_msg}")
-    elif st.session_state.stage == "done":
-        st.warning(f"⚠️ {st.session_state.status_msg}")
-    elif st.session_state.running:
-        st.info(f"⏳ {st.session_state.status_msg}")
+    log_placeholder      = st.empty()
+    progress_placeholder = st.empty()
+    download_placeholder = st.empty()
+    excel_placeholder    = st.empty()
 
-    # Log box
-    log_text = "\n".join(st.session_state.logs[-100:]) if st.session_state.logs else "[ — ] Sistema pronto. Configure as credenciais e clique em iniciar.\n[ — ] Chrome/Selenium em standby (webdriver-manager).\n[ — ] Diretório de saída: /tmp/downloads"
-    st.markdown(f'<div class="log-box">{log_text}</div>', unsafe_allow_html=True)
-
-    # Download Excel
-    if st.session_state.stage == "done" and st.session_state.excel_bytes:
-        st.markdown("---")
-        periodo = f"{data_ini.replace('/','_')}_a_{data_fin.replace('/','_')}"
-        st.download_button(
-            label=f"📥  BAIXAR EXCEL CONSOLIDADO — {st.session_state.xml_count} registro(s)",
-            data=st.session_state.excel_bytes,
-            file_name=f"MasterSAF_Captura_{periodo}.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        )
+    log_placeholder.markdown("""
+    <div style="background:#0d0f14; border:1px solid #1f2329; border-top:2px solid #c6ff00; padding:1.2rem 1.5rem; min-height:200px;">
+        <div style="font-family:'IBM Plex Mono',monospace; font-size:0.6rem; letter-spacing:0.2em; text-transform:uppercase; color:#5a5e66; margin-bottom:1rem; display:flex; align-items:center; gap:0.6rem;">
+            <span style="width:6px;height:6px;border-radius:50%;background:#2a2e35;display:inline-block;"></span>
+            SYSTEM LOG — AGUARDANDO INICIALIZAÇÃO
+        </div>
+        <div style="font-family:'IBM Plex Mono',monospace; font-size:0.7rem; color:#3a3e46; line-height:1.9;">
+            [ — ] Sistema pronto. Configure as credenciais e clique em iniciar.<br>
+            [ — ] Chrome/Selenium em standby (webdriver-manager).<br>
+            [ — ] Diretório de saída: /tmp/downloads
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
 
 # ─────────────────────────────────────────────
-# XML PROCESSOR (Genérico - sem namespace CT-e)
+# CT-e PROCESSOR
 # ─────────────────────────────────────────────
 
-class XMLProcessor:
-    """Processa arquivos XML extraindo todos os campos disponíveis"""
+CTE_NAMESPACES = {
+    'cte': 'http://www.portalfiscal.inf.br/cte'
+}
+
+
+class CTeProcessor:
+    """Processa arquivos XML de CT-e extraindo campos fiscais"""
     
     def __init__(self):
         self.processed_data = []
     
-    def extract_all_fields(self, root, parent_path=''):
-        """Extrai recursivamente todos os campos do XML"""
-        fields = {}
-        
-        def recursive_extract(element, path=''):
-            # Adiciona atributos
-            if element.attrib:
-                for attr_key, attr_val in element.attrib.items():
-                    full_path = f"{path}/@{attr_key}" if path else f"@{attr_key}"
-                    fields[full_path] = attr_val
-            
-            # Se tem filhos, processa recursivamente
-            children = list(element)
-            if children:
-                for child in children:
-                    # Extrai o nome da tag sem namespace
-                    tag = child.tag.split('}')[-1] if '}' in child.tag else child.tag
-                    child_path = f"{path}/{tag}" if path else tag
-                    recursive_extract(child, child_path)
-            else:
-                # Elemento folha - adiciona valor
-                if element.text and element.text.strip():
-                    tag = element.tag.split('}')[-1] if '}' in element.tag else element.tag
-                    full_path = f"{path}/{tag}" if path else tag
-                    fields[full_path] = element.text.strip()
-        
-        recursive_extract(root)
-        return fields
+    def extract_nfe_number_from_key(self, chave_acesso):
+        if not chave_acesso or len(chave_acesso) != 44:
+            return None
+        try:
+            return chave_acesso[25:34]
+        except Exception:
+            return None
     
-    def process_xml_files_from_directory(self, directory_path, log_callback):
+    def extract_peso_bruto(self, root):
+        """Extrai o peso bruto do CT-e"""
+        try:
+            tipos_peso = ['PESO BRUTO', 'PESO BASE DE CALCULO', 'PESO BASE CÁLCULO', 'PESO']
+            
+            for prefix, uri in CTE_NAMESPACES.items():
+                infQ_elements = root.findall(f'.//{{{uri}}}infQ')
+                for infQ in infQ_elements:
+                    tpMed = infQ.find(f'{{{uri}}}tpMed')
+                    qCarga = infQ.find(f'{{{uri}}}qCarga')
+                    
+                    if tpMed is not None and tpMed.text and qCarga is not None and qCarga.text:
+                        for tipo_peso in tipos_peso:
+                            if tipo_peso in tpMed.text.upper():
+                                return float(qCarga.text)
+            
+            infQ_elements = root.findall('.//infQ')
+            for infQ in infQ_elements:
+                tpMed = infQ.find('tpMed')
+                qCarga = infQ.find('qCarga')
+                
+                if tpMed is not None and tpMed.text and qCarga is not None and qCarga.text:
+                    for tipo_peso in tipos_peso:
+                        if tipo_peso in tpMed.text.upper():
+                            return float(qCarga.text)
+            
+            return 0.0
+        except Exception:
+            return 0.0
+    
+    def extract_cte_data(self, xml_content, filename):
+        """Extrai dados do CT-e"""
+        try:
+            root = ET.fromstring(xml_content)
+            
+            def find_text(element, xpath):
+                try:
+                    for prefix, uri in CTE_NAMESPACES.items():
+                        full_xpath = xpath.replace('cte:', f'{{{uri}}}')
+                        found = element.find(full_xpath)
+                        if found is not None and found.text:
+                            return found.text
+                    
+                    found = element.find(xpath.replace('cte:', ''))
+                    if found is not None and found.text:
+                        return found.text
+                    return None
+                except Exception:
+                    return None
+            
+            nCT = find_text(root, './/cte:nCT')
+            dhEmi = find_text(root, './/cte:dhEmi')
+            cMunIni = find_text(root, './/cte:cMunIni')
+            UFIni = find_text(root, './/cte:UFIni')
+            cMunFim = find_text(root, './/cte:cMunFim')
+            UFFim = find_text(root, './/cte:UFFim')
+            emit_xNome = find_text(root, './/cte:emit/cte:xNome')
+            vTPrest = find_text(root, './/cte:vTPrest')
+            rem_xNome = find_text(root, './/cte:rem/cte:xNome')
+            
+            dest_xNome = find_text(root, './/cte:dest/cte:xNome')
+            dest_CNPJ = find_text(root, './/cte:dest/cte:CNPJ')
+            dest_CPF = find_text(root, './/cte:dest/cte:CPF')
+            documento_destinatario = dest_CNPJ or dest_CPF or 'N/A'
+            
+            dest_xLgr = find_text(root, './/cte:dest/cte:enderDest/cte:xLgr')
+            dest_nro = find_text(root, './/cte:dest/cte:enderDest/cte:nro')
+            dest_xBairro = find_text(root, './/cte:dest/cte:enderDest/cte:xBairro')
+            dest_xMun = find_text(root, './/cte:dest/cte:enderDest/cte:xMun')
+            dest_UF = find_text(root, './/cte:dest/cte:enderDest/cte:UF')
+            dest_CEP = find_text(root, './/cte:dest/cte:enderDest/cte:CEP')
+            
+            endereco_destinatario = ""
+            if dest_xLgr:
+                endereco_destinatario += f"{dest_xLgr}"
+                if dest_nro:
+                    endereco_destinatario += f", {dest_nro}"
+                if dest_xBairro:
+                    endereco_destinatario += f" - {dest_xBairro}"
+                if dest_xMun:
+                    endereco_destinatario += f", {dest_xMun}"
+                if dest_UF:
+                    endereco_destinatario += f"/{dest_UF}"
+                if dest_CEP:
+                    endereco_destinatario += f" - CEP: {dest_CEP}"
+            
+            if not endereco_destinatario:
+                endereco_destinatario = "N/A"
+            
+            infNFe_chave = find_text(root, './/cte:infNFe/cte:chave')
+            numero_nfe = self.extract_nfe_number_from_key(infNFe_chave) if infNFe_chave else None
+            
+            peso_bruto = self.extract_peso_bruto(root)
+            
+            data_formatada = None
+            if dhEmi:
+                try:
+                    data_obj = datetime.strptime(dhEmi[:10], '%Y-%m-%d')
+                    data_formatada = data_obj.strftime('%d/%m/%y')
+                except:
+                    try:
+                        data_obj = datetime.strptime(dhEmi[:10], '%d/%m/%Y')
+                        data_formatada = data_obj.strftime('%d/%m/%y')
+                    except:
+                        data_formatada = dhEmi[:10]
+            
+            try:
+                vTPrest = float(vTPrest) if vTPrest else 0.0
+            except (ValueError, TypeError):
+                vTPrest = 0.0
+            
+            return {
+                'Arquivo': filename,
+                'nCT': nCT or 'N/A',
+                'Data Emissão': data_formatada or dhEmi or 'N/A',
+                'Código Município Início': cMunIni or 'N/A',
+                'UF Início': UFIni or 'N/A',
+                'Código Município Fim': cMunFim or 'N/A',
+                'UF Fim': UFFim or 'N/A',
+                'Emitente': emit_xNome or 'N/A',
+                'Valor Prestação': vTPrest,
+                'Peso Bruto (kg)': peso_bruto,
+                'Remetente': rem_xNome or 'N/A',
+                'Destinatário': dest_xNome or 'N/A',
+                'Documento Destinatário': documento_destinatario,
+                'Endereço Destinatário': endereco_destinatario,
+                'Município Destino': dest_xMun or 'N/A',
+                'UF Destino': dest_UF or 'N/A',
+                'Chave NFe': infNFe_chave or 'N/A',
+                'Número NFe': numero_nfe or 'N/A',
+                'Data Processamento': datetime.now().strftime('%d/%m/%Y %H:%M:%S')
+            }
+        except Exception:
+            return None
+    
+    def process_xml_files_from_directory(self, directory_path):
         """Processa todos os arquivos XML em um diretório"""
         xml_files = list(Path(directory_path).glob('*.xml'))
-        log_callback(f"   📄 {len(xml_files)} XMLs encontrados")
-        
-        all_fields_set = set()
-        file_data_list = []
+        count = 0
         
         for xml_file in xml_files:
             try:
                 with open(xml_file, 'r', encoding='utf-8') as f:
                     content = f.read()
                 
-                root = ET.fromstring(content)
-                fields = self.extract_all_fields(root)
-                fields['_arquivo_origem'] = xml_file.name
-                
-                all_fields_set.update(fields.keys())
-                file_data_list.append(fields)
-            except Exception as e:
-                log_callback(f"   ⚠ Erro ao processar {xml_file.name}: {str(e)[:50]}")
+                if 'CTe' in content or 'conhecimento' in content.lower():
+                    data = self.extract_cte_data(content, xml_file.name)
+                    if data:
+                        self.processed_data.append(data)
+                        count += 1
+            except Exception:
+                pass
         
-        # Cria DataFrame com todas as colunas encontradas
-        if file_data_list:
-            df = pd.DataFrame(file_data_list)
-            
-            # Garante que _arquivo_origem seja a primeira coluna
-            cols = ['_arquivo_origem'] + [c for c in df.columns if c != '_arquivo_origem']
-            df = df[cols]
-            
-            # Adiciona ao processado_data
-            self.processed_data = df.to_dict('records')
-        
-        return len(file_data_list), len(xml_files)
+        return count, len(xml_files)
     
-    def export_to_excel(self):
-        """Exporta os dados processados para Excel (BytesIO)"""
+    def export_to_excel(self, output_path):
+        """Exporta os dados processados para Excel"""
         if self.processed_data:
             df = pd.DataFrame(self.processed_data)
-            buf = BytesIO()
-            df.to_excel(buf, index=False, sheet_name='Dados_XML')
-            buf.seek(0)
-            return buf.getvalue(), len(df)
-        return None, 0
+            df.to_excel(output_path, index=False, sheet_name='Dados_CTe', engine='openpyxl')
+            return True, len(df)
+        return False, 0
     
     def clear_data(self):
         self.processed_data = []
@@ -757,6 +751,29 @@ def get_driver(download_path, chrome_binary=None, chrome_version=None):
     return driver
 
 
+def render_log(lines, active=True):
+    """Renderiza o log no estilo terminal dark"""
+    dot_color   = "#c6ff00" if active else "#2a2e35"
+    status_text = "EM EXECUÇÃO" if active else "CONCLUÍDO"
+    status_color = "#c6ff00" if active else "#5a5e66"
+    rows_html   = "".join(lines)
+    return f"""
+    <div style="background:#0d0f14; border:1px solid #1f2329; border-top:2px solid #c6ff00;
+                padding:1.2rem 1.5rem; min-height:200px;">
+        <div style="font-family:'IBM Plex Mono',monospace; font-size:0.6rem; letter-spacing:0.2em;
+                    text-transform:uppercase; color:{status_color}; margin-bottom:1rem;
+                    display:flex; align-items:center; gap:0.6rem;">
+            <span style="width:6px;height:6px;border-radius:50%;background:{dot_color};
+                         display:inline-block;"></span>
+            SYSTEM LOG — {status_text}
+        </div>
+        <div style="font-family:'IBM Plex Mono',monospace; font-size:0.7rem; line-height:1.9;">
+            {rows_html}
+        </div>
+    </div>
+    """
+
+
 def esperar_downloads(directory, timeout=120):
     """Aguarda downloads terminarem"""
     start_time = time.time()
@@ -769,307 +786,315 @@ def esperar_downloads(directory, timeout=120):
 
 
 # ─────────────────────────────────────────────
-# PROCESSAMENTO PÓS-DOWNLOAD
-# ─────────────────────────────────────────────
-
-def processar_arquivos_baixados(base_dir, log_callback, state):
-    """Processa os ZIPs baixados e gera Excel"""
-    log_callback("=" * 50)
-    log_callback("📦 INICIANDO PROCESSAMENTO DOS ARQUIVOS")
-    log_callback("=" * 50)
-    
-    state["stage"] = "extract"
-    
-    zip_files = list(Path(base_dir).glob('*.zip'))
-    log_callback(f"🔍 {len(zip_files)} arquivos ZIP encontrados")
-    
-    if not zip_files:
-        log_callback("⚠ Nenhum arquivo ZIP para processar!")
-        state["error_msg"] = "Nenhum ZIP baixado. Verifique login e datas."
-        state["stage"] = "done"
-        return
-    
-    # Cria diretório de extração
-    extract_dir = tempfile.mkdtemp(prefix="mastersaf_extracted_")
-    all_xml_dirs = []
-    
-    # Extrai ZIPs
-    log_callback("📂 Extraindo arquivos ZIP...")
-    for zip_file in zip_files:
-        try:
-            zip_name = zip_file.stem
-            extract_path = os.path.join(extract_dir, zip_name)
-            os.makedirs(extract_path, exist_ok=True)
-            
-            with zipfile.ZipFile(zip_file, 'r') as zip_ref:
-                zip_ref.extractall(extract_path)
-            
-            all_xml_dirs.append(extract_path)
-            log_callback(f"   ✔ {zip_file.name}")
-        except Exception as e:
-            log_callback(f"   ❌ Erro ao extrair {zip_file.name}: {e}")
-    
-    # Processa XMLs
-    state["stage"] = "excel"
-    log_callback("📄 Processando arquivos XML...")
-    
-    processor = XMLProcessor()
-    
-    for xml_dir in all_xml_dirs:
-        processor.process_xml_files_from_directory(xml_dir, log_callback)
-    
-    total_processados = len(processor.processed_data)
-    log_callback(f"📊 Total de registros extraídos: {total_processados}")
-    state["xml_count"] = total_processados
-    
-    if total_processados > 0:
-        log_callback("📊 Gerando Excel consolidado...")
-        
-        excel_bytes, num_registros = processor.export_to_excel()
-        processor.clear_data()
-        
-        state["excel_bytes"] = excel_bytes
-        state["xml_count"] = num_registros
-        state["stage"] = "done"
-        state["status_msg"] = f"Processamento concluído! {num_registros} registros extraídos."
-        
-        log_callback(f"✅ Excel gerado com sucesso!")
-        log_callback(f"📈 Total de registros: {num_registros}")
-    else:
-        processor.clear_data()
-        log_callback("⚠ Nenhum registro extraído dos XMLs")
-        state["error_msg"] = "Nenhum dado válido encontrado nos XMLs."
-        state["stage"] = "done"
-    
-    # Limpa diretório de extração
-    shutil.rmtree(extract_dir, ignore_errors=True)
-    log_callback("=" * 50)
-
-
-# ─────────────────────────────────────────────
-# THREAD DE AUTOMAÇÃO
-# ─────────────────────────────────────────────
-
-def rodar_automacao(usuario, senha, dt_ini, dt_fin, loops, processar, state):
-    """Função principal executada em thread separada"""
-    
-    def log(msg):
-        ts = datetime.now().strftime("%H:%M:%S")
-        state["logs"].append(f"[{ts}] {msg}")
-        state["status_msg"] = msg
-    
-    driver = None
-    dl_path = "/tmp/downloads"
-    
-    try:
-        # Prepara diretório de downloads
-        if os.path.exists(dl_path):
-            shutil.rmtree(dl_path)
-        os.makedirs(dl_path, exist_ok=True)
-        
-        # ── ETAPA 1: Localizar browser ──
-        log("Procurando Chrome/Chromium no sistema...")
-        chrome_binary = find_chrome_binary()
-        
-        if not chrome_binary:
-            raise Exception(
-                "Chrome/Chromium não encontrado. "
-                "Instale: sudo apt-get install chromium-browser"
-            )
-        
-        log(f"Browser encontrado: {chrome_binary}")
-        
-        # ── ETAPA 2: Detectar versão ──
-        chrome_version = get_chrome_version(chrome_binary)
-        
-        if chrome_version:
-            log(f"Versão detectada: {chrome_version}")
-        else:
-            log("Não foi possível detectar a versão do browser")
-        
-        # ── ETAPA 3: Inicializar driver ──
-        log("Inicializando ChromeDriver...")
-        driver = get_driver(dl_path, chrome_binary, chrome_version)
-        log("ChromeDriver inicializado com sucesso!")
-        
-        # ── ETAPA 4: Login ──
-        log("Acessando portal MasterSAF...")
-        driver.get("https://p.dfe.mastersaf.com.br/mvc/login")
-        time.sleep(3)
-        
-        driver.find_element(By.XPATH, '//*[@id="nomeusuario"]').send_keys(usuario)
-        driver.find_element(By.XPATH, '//*[@id="senha"]').send_keys(senha)
-        
-        driver.execute_script(
-            "arguments[0].click();",
-            driver.find_element(By.XPATH, '//*[@id="enter"]')
-        )
-        time.sleep(5)
-        log("Autenticação realizada com sucesso.")
-        
-        # ── ETAPA 5: Navegar ──
-        log("Navegando até Listagem de CT-es (Receptor)...")
-        driver.execute_script(
-            "arguments[0].click();",
-            driver.find_element(By.XPATH, '//*[@id="linkListagemReceptorCTEs"]/a')
-        )
-        time.sleep(4)
-        
-        # ── ETAPA 6: Configurar período ──
-        log(f"Configurando período: {dt_ini} → {dt_fin}")
-        
-        el_ini = driver.find_element(By.XPATH, '//*[@id="consultaDataInicial"]')
-        el_ini.send_keys(Keys.CONTROL, 'a', Keys.BACKSPACE)
-        el_ini.send_keys(dt_ini)
-        
-        el_fin = driver.find_element(By.XPATH, '//*[@id="consultaDataFinal"]')
-        el_fin.send_keys(Keys.CONTROL, 'a', Keys.BACKSPACE)
-        el_fin.send_keys(dt_fin)
-        
-        driver.execute_script(
-            "arguments[0].click();",
-            driver.find_element(By.XPATH, '//*[@id="listagem_atualiza"]')
-        )
-        time.sleep(4)
-        log("Base de dados atualizada.")
-        
-        # ── ETAPA 7: Selecionar 100 registros ──
-        log("Configurando exibição: 100 registros por página...")
-        driver.find_element(
-            By.XPATH,
-            '//*[@id="plistagem_center"]/table/tbody/tr/td[8]/select/option[5]'
-        ).click()
-        time.sleep(4)
-        
-        # ── ETAPA 8: Loop de captura ──
-        total_paginas = int(loops)
-        log(f"Iniciando captura em massa: {total_paginas} página(s)...")
-        
-        for i in range(total_paginas):
-            pagina_atual = i + 1
-            state["page_atual"] = pagina_atual
-            state["stage"] = "download"
-            
-            log(f"Processando página {pagina_atual}/{total_paginas}...")
-            
-            # Seleciona todos os checkboxes
-            driver.execute_script(
-                "arguments[0].click();",
-                driver.find_element(
-                    By.XPATH, '//*[@id="jqgh_listagem_checkBox"]/div/input'
-                )
-            )
-            time.sleep(1)
-            
-            # Clica no botão de download múltiplo
-            driver.execute_script(
-                "arguments[0].click();",
-                driver.find_element(By.XPATH, '//*[@id="xml_multiplos"]/h3')
-            )
-            time.sleep(1)
-            
-            driver.execute_script(
-                "arguments[0].click();",
-                driver.find_element(By.XPATH, '//*[@id="downloadEmMassaXml"]')
-            )
-            log(f"Download da página {pagina_atual} iniciado...")
-            
-            # Aguarda downloads
-            esperar_downloads(dl_path)
-            time.sleep(5)
-            
-            # Desmarca checkbox
-            driver.execute_script(
-                "arguments[0].click();",
-                driver.find_element(
-                    By.XPATH, '//*[@id="jqgh_listagem_checkBox"]/div/input'
-                )
-            )
-            time.sleep(1)
-            
-            # Avança para próxima página
-            if pagina_atual < total_paginas:
-                driver.execute_script(
-                    "arguments[0].click();",
-                    driver.find_element(By.XPATH, '//*[@id="next_plistagem"]/span')
-                )
-                time.sleep(3)
-            
-            log(f"Página {pagina_atual} concluída.")
-            time.sleep(2)
-        
-        log("Captura finalizada!")
-        
-        # ── ETAPA 9: Pós-processamento ──
-        if processar:
-            processar_arquivos_baixados(dl_path, log, state)
-        else:
-            log("⚠ Processamento desativado. Arquivos disponíveis em /tmp/downloads")
-            state["stage"] = "done"
-            state["status_msg"] = "Downloads concluídos. Processamento desativado."
-        
-        # Conta arquivos capturados
-        zip_files = list(Path(dl_path).glob('*.zip'))
-        state["arquivos_capturados"] = len(zip_files)
-        
-    except Exception as e:
-        import traceback
-        log(f"❌ ERRO CRÍTICO: {str(e)}")
-        log(traceback.format_exc())
-        state["error_msg"] = str(e)
-        state["stage"] = "done"
-        
-        if "chromedriver" in str(e).lower() or "chrome" in str(e).lower():
-            log("Sugestão: Execute 'sudo apt-get update && sudo apt-get install -y chromium-browser'")
-            log("Depois reinicie o aplicativo Streamlit.")
-    
-    finally:
-        # Fecha o navegador
-        if driver is not None:
-            try:
-                driver.quit()
-            except Exception:
-                pass
-        
-        state["running"] = False
-        state["done"] = True
-        log("Processo finalizado.")
-
-
-# ─────────────────────────────────────────────
-# DISPARO DA THREAD
+# LÓGICA PRINCIPAL DE AUTOMAÇÃO
 # ─────────────────────────────────────────────
 
 if iniciar:
     if not usuario or not senha:
         with right_col:
-            st.error("⚠️ Preencha usuário e senha para continuar.")
+            st.error("⚠️  Preencha usuário e senha para continuar.")
     else:
-        # Reseta estado
-        st.session_state.running = True
-        st.session_state.done = False
-        st.session_state.error_msg = ""
-        st.session_state.page_atual = 0
-        st.session_state.page_total = int(qtd_loops)
-        st.session_state.status_msg = "Iniciando..."
-        st.session_state.stage = "download"
-        st.session_state.xml_count = 0
-        st.session_state.excel_bytes = None
-        st.session_state.logs = []
-        st.session_state.arquivos_capturados = 0
+        # Prepara diretório de downloads
+        dl_path = "/tmp/downloads"
+        if os.path.exists(dl_path):
+            shutil.rmtree(dl_path)
+        os.makedirs(dl_path, exist_ok=True)
         
-        # Inicia thread
-        t = threading.Thread(
-            target=rodar_automacao,
-            args=(usuario, senha, data_ini, data_fin, int(qtd_loops), processar_xml, st.session_state),
-            daemon=True,
-        )
-        t.start()
-        st.rerun()
-
-# ─────────────────────────────────────────────
-# AUTO-REFRESH DURANTE EXECUÇÃO
-# ─────────────────────────────────────────────
-if st.session_state.running:
-    time.sleep(3)
-    st.rerun()
+        logs = []
+        
+        def log(msg, kind="dim"):
+            colors   = {
+                "ok": "#c6ff00",
+                "err": "#e84a2b",
+                "info": "#5b8fff",
+                "dim": "#4a5568",
+                "warn": "#f59e0b"
+            }
+            prefixes = {
+                "ok": "[OK ]",
+                "err": "[ERR]",
+                "info": "[INF]",
+                "dim": "[ — ]",
+                "warn": "[WRN]"
+            }
+            color  = colors.get(kind, "#4a5568")
+            prefix = prefixes.get(kind, "[ — ]")
+            logs.append(
+                f'<span style="color:{color};">{prefix}</span> '
+                f'<span style="color:#8896a8;">{msg}</span><br>'
+            )
+            log_placeholder.markdown(render_log(logs), unsafe_allow_html=True)
+        
+        driver = None
+        
+        try:
+            # ── ETAPA 1: Localizar browser ──
+            log("Procurando Chrome/Chromium no sistema...", "info")
+            chrome_binary = find_chrome_binary()
+            
+            if not chrome_binary:
+                raise Exception(
+                    "Chrome/Chromium não encontrado. "
+                    "Instale: sudo apt-get install chromium-browser"
+                )
+            
+            log(f"Browser encontrado: {chrome_binary}", "info")
+            
+            # ── ETAPA 2: Detectar versão ──
+            chrome_version = get_chrome_version(chrome_binary)
+            
+            if chrome_version:
+                log(f"Versão detectada: {chrome_version}", "info")
+            else:
+                log("Não foi possível detectar a versão do browser", "warn")
+            
+            # ── ETAPA 3: Inicializar driver ──
+            log("Inicializando ChromeDriver...", "info")
+            driver = get_driver(dl_path, chrome_binary, chrome_version)
+            log("ChromeDriver inicializado com sucesso!", "ok")
+            
+            # ── ETAPA 4: Login ──
+            log("Acessando portal MasterSAF...", "info")
+            driver.get("https://p.dfe.mastersaf.com.br/mvc/login")
+            time.sleep(3)
+            
+            driver.find_element(By.XPATH, '//*[@id="nomeusuario"]').send_keys(usuario)
+            driver.find_element(By.XPATH, '//*[@id="senha"]').send_keys(senha)
+            
+            driver.execute_script(
+                "arguments[0].click();",
+                driver.find_element(By.XPATH, '//*[@id="enter"]')
+            )
+            time.sleep(5)
+            log("Autenticação realizada com sucesso.", "ok")
+            
+            # ── ETAPA 5: Navegar ──
+            log("Navegando até Listagem de CT-es (Receptor)...", "info")
+            driver.execute_script(
+                "arguments[0].click();",
+                driver.find_element(By.XPATH, '//*[@id="linkListagemReceptorCTEs"]/a')
+            )
+            time.sleep(4)
+            
+            # ── ETAPA 6: Configurar período ──
+            log(f"Configurando período: {data_ini} → {data_fin}", "info")
+            
+            el_ini = driver.find_element(By.XPATH, '//*[@id="consultaDataInicial"]')
+            el_ini.send_keys(Keys.CONTROL, 'a', Keys.BACKSPACE)
+            el_ini.send_keys(data_ini)
+            
+            el_fin = driver.find_element(By.XPATH, '//*[@id="consultaDataFinal"]')
+            el_fin.send_keys(Keys.CONTROL, 'a', Keys.BACKSPACE)
+            el_fin.send_keys(data_fin)
+            
+            driver.execute_script(
+                "arguments[0].click();",
+                driver.find_element(By.XPATH, '//*[@id="listagem_atualiza"]')
+            )
+            time.sleep(4)
+            log("Base de dados atualizada.", "ok")
+            
+            # ── ETAPA 7: Selecionar 100 registros ──
+            log("Configurando exibição: 100 registros por página...", "info")
+            driver.find_element(
+                By.XPATH,
+                '//*[@id="plistagem_center"]/table/tbody/tr/td[8]/select/option[5]'
+            ).click()
+            time.sleep(4)
+            
+            # ── ETAPA 8: Loop de captura ──
+            total_paginas = int(qtd_loops)
+            log(f"Iniciando captura em massa: {total_paginas} página(s)...", "info")
+            
+            for i in range(total_paginas):
+                pagina_atual = i + 1
+                log(f"Processando página {pagina_atual}/{total_paginas}...", "dim")
+                
+                driver.execute_script(
+                    "arguments[0].click();",
+                    driver.find_element(
+                        By.XPATH, '//*[@id="jqgh_listagem_checkBox"]/div/input'
+                    )
+                )
+                time.sleep(1)
+                
+                driver.execute_script(
+                    "arguments[0].click();",
+                    driver.find_element(By.XPATH, '//*[@id="xml_multiplos"]/h3')
+                )
+                time.sleep(1)
+                
+                driver.execute_script(
+                    "arguments[0].click();",
+                    driver.find_element(By.XPATH, '//*[@id="downloadEmMassaXml"]')
+                )
+                log(f"Download da página {pagina_atual} iniciado...", "dim")
+                
+                esperar_downloads(dl_path)
+                time.sleep(5)
+                
+                driver.execute_script(
+                    "arguments[0].click();",
+                    driver.find_element(
+                        By.XPATH, '//*[@id="jqgh_listagem_checkBox"]/div/input'
+                    )
+                )
+                time.sleep(1)
+                
+                if pagina_atual < total_paginas:
+                    driver.execute_script(
+                        "arguments[0].click();",
+                        driver.find_element(By.XPATH, '//*[@id="next_plistagem"]/span')
+                    )
+                    time.sleep(3)
+                
+                progress_placeholder.progress(pagina_atual / total_paginas)
+                log(f"Página {pagina_atual} concluída.", "ok")
+                time.sleep(2)
+            
+            log("Captura finalizada!", "ok")
+            
+            # Fecha o navegador
+            driver.quit()
+            driver = None
+            
+            # ── ETAPA 9: Pós-processamento ──
+            if processar_xml:
+                log("=" * 50, "info")
+                log("📦 INICIANDO PROCESSAMENTO DOS ARQUIVOS", "info")
+                log("=" * 50, "info")
+                
+                # Localiza ZIPs
+                zip_files = list(Path(dl_path).glob('*.zip'))
+                log(f"🔍 {len(zip_files)} arquivos ZIP encontrados", "info")
+                
+                if not zip_files:
+                    log("⚠ Nenhum arquivo ZIP para processar!", "warn")
+                else:
+                    # Cria diretório de extração
+                    extract_dir = tempfile.mkdtemp(prefix="mastersaf_extracted_")
+                    
+                    # Extrai ZIPs
+                    log("📂 Extraindo arquivos ZIP...", "info")
+                    all_xml_dirs = []
+                    
+                    for zip_file in zip_files:
+                        try:
+                            zip_name = zip_file.stem
+                            extract_path = os.path.join(extract_dir, zip_name)
+                            os.makedirs(extract_path, exist_ok=True)
+                            
+                            with zipfile.ZipFile(zip_file, 'r') as zip_ref:
+                                zip_ref.extractall(extract_path)
+                            
+                            all_xml_dirs.append(extract_path)
+                            log(f"   ✔ {zip_file.name}", "ok")
+                        except Exception as e:
+                            log(f"   ❌ Erro ao extrair {zip_file.name}: {e}", "err")
+                    
+                    # Processa XMLs
+                    log("📄 Processando arquivos XML de CT-e...", "info")
+                    
+                    processor = CTeProcessor()
+                    total_xml_encontrados = 0
+                    total_xml_lidos = 0
+                    
+                    for xml_dir in all_xml_dirs:
+                        processados, encontrados = processor.process_xml_files_from_directory(xml_dir)
+                        total_xml_encontrados += encontrados
+                        total_xml_lidos += processados
+                    
+                    log(f"📊 XMLs encontrados: {total_xml_encontrados}", "info")
+                    log(f"📊 CT-es identificados: {total_xml_lidos}", "info")
+                    
+                    # Gera Excel
+                    if total_xml_lidos > 0:
+                        log("📊 Gerando arquivo Excel consolidado...", "info")
+                        
+                        # Cria pasta de resultados
+                        results_dir = "/tmp/mastersaf_resultados"
+                        os.makedirs(results_dir, exist_ok=True)
+                        
+                        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                        excel_filename = f"CTe_Processados_{timestamp}.xlsx"
+                        excel_path = os.path.join(results_dir, excel_filename)
+                        
+                        success, num_registros = processor.export_to_excel(excel_path)
+                        
+                        if success:
+                            # Calcula totais
+                            df = pd.DataFrame(processor.processed_data)
+                            peso_total = df['Peso Bruto (kg)'].sum()
+                            valor_total = df['Valor Prestação'].sum()
+                            
+                            log(f"✅ Excel gerado com sucesso!", "ok")
+                            log(f"📈 Resumo:", "info")
+                            log(f"   • Registros: {num_registros}", "dim")
+                            log(f"   • Peso Bruto Total: {peso_total:,.2f} kg", "dim")
+                            log(f"   • Valor Total: R$ {valor_total:,.2f}", "dim")
+                            
+                            # Botão de download do Excel
+                            with open(excel_path, "rb") as f:
+                                excel_placeholder.download_button(
+                                    f"📥  BAIXAR EXCEL CONSOLIDADO ({num_registros} CT-es)",
+                                    f,
+                                    excel_filename,
+                                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                                )
+                            
+                            # Preview da tabela
+                            st.dataframe(
+                                df.head(10),
+                                use_container_width=True,
+                                hide_index=True
+                            )
+                            st.caption(f"Mostrando 10 de {num_registros} registros")
+                        else:
+                            log("⚠ Erro ao gerar Excel", "err")
+                    else:
+                        log("⚠ Nenhum CT-e identificado nos XMLs", "warn")
+                    
+                    processor.clear_data()
+                    
+                    # Limpa diretório de extração
+                    try:
+                        shutil.rmtree(extract_dir)
+                    except:
+                        pass
+            else:
+                # Se não processar, oferece ZIP
+                log("⚠ Processamento desativado. Compactando ZIPs...", "warn")
+                
+                zip_filename = "/tmp/resultado.zip"
+                with zipfile.ZipFile(zip_filename, 'w', zipfile.ZIP_DEFLATED) as zipf:
+                    for root, dirs, files in os.walk(dl_path):
+                        for file in files:
+                            file_path = os.path.join(root, file)
+                            zipf.write(file_path, file)
+                
+                with open(zip_filename, "rb") as f:
+                    download_placeholder.download_button(
+                        "📥  BAIXAR ARQUIVOS XML (.ZIP)",
+                        f,
+                        "XMLs_MasterSaf.zip",
+                        "application/zip",
+                    )
+            
+            log("Processo finalizado com sucesso!", "ok")
+            log_placeholder.markdown(render_log(logs, active=False), unsafe_allow_html=True)
+            
+        except Exception as e:
+            error_msg = str(e)
+            log(f"Erro crítico: {error_msg}", "err")
+            
+            if "chromedriver" in error_msg.lower() or "chrome" in error_msg.lower():
+                log("Sugestão: Execute 'sudo apt-get update && sudo apt-get install -y chromium-browser'", "warn")
+                log("Depois reinicie o aplicativo Streamlit.", "warn")
+            
+            if 'driver' in locals() and driver is not None:
+                try:
+                    driver.quit()
+                except Exception:
+                    pass
+            
+            log_placeholder.markdown(render_log(logs, active=False), unsafe_allow_html=True)
