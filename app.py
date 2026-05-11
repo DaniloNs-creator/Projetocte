@@ -14,9 +14,14 @@ from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.common.exceptions import TimeoutException, NoSuchElementException, WebDriverException
 import subprocess
 import requests
 import re
+import signal
+import psutil
 
 st.set_page_config(
     page_title="MasterSAF — Automação XML",
@@ -30,6 +35,10 @@ if 'ms_logs' not in st.session_state:
     st.session_state.ms_logs = []
 if 'download_path' not in st.session_state:
     st.session_state.download_path = None
+if 'execucao_ativa' not in st.session_state:
+    st.session_state.execucao_ativa = False
+if 'progresso_atual' not in st.session_state:
+    st.session_state.progresso_atual = 0
 
 st.markdown("""
 <style>
@@ -230,6 +239,10 @@ html, body, [data-testid="stAppViewContainer"], [data-testid="stMain"] {
     transform: translateY(-1px) !important;
 }
 .stButton > button:active { transform: translateY(0) !important; }
+.stButton > button:disabled {
+    opacity: 0.5 !important;
+    cursor: not-allowed !important;
+}
 
 /* ── DOWNLOAD BUTTON ── */
 .stDownloadButton > button {
@@ -366,6 +379,27 @@ html, body, [data-testid="stAppViewContainer"], [data-testid="stMain"] {
     font-family: 'JetBrains Mono', monospace !important;
     font-size: 0.75rem !important;
 }
+
+/* ── SAFETY STATUS ── */
+.safety-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.4rem 1rem;
+    border-radius: 20px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.7rem;
+}
+.safety-ok {
+    background: rgba(34,211,165,0.1);
+    border: 1px solid rgba(34,211,165,0.3);
+    color: #22d3a5;
+}
+.safety-warn {
+    background: rgba(251,191,36,0.1);
+    border: 1px solid rgba(251,191,36,0.3);
+    color: #fbbf24;
+}
 </style>
 """, unsafe_allow_html=True)
 
@@ -375,12 +409,29 @@ html, body, [data-testid="stAppViewContainer"], [data-testid="stMain"] {
 CTE_NAMESPACES = {'cte': 'http://www.portalfiscal.inf.br/cte'}
 
 # ─────────────────────────────────────────────
-# FUNÇÃO AUXILIAR PARA LOG
+# FUNÇÕES DE LOG E CONTROLE
 # ─────────────────────────────────────────────
 def add_log(msg):
-    """Adiciona mensagem ao log da sessão de forma segura"""
+    """Adiciona mensagem ao log com limite de segurança"""
     ts = datetime.now().strftime("%H:%M:%S")
     st.session_state.ms_logs.append(f"[{ts}]  {msg}")
+    # Limitar logs para não sobrecarregar memória (manter últimos 500)
+    if len(st.session_state.ms_logs) > 500:
+        st.session_state.ms_logs = st.session_state.ms_logs[-500:]
+
+def kill_chrome_processes():
+    """Mata todos os processos do Chrome/Chromium para liberar recursos"""
+    try:
+        for proc in psutil.process_iter(['pid', 'name']):
+            try:
+                if proc.info['name'] and any(name in proc.info['name'].lower() 
+                    for name in ['chrome', 'chromium', 'chromedriver']):
+                    os.kill(proc.info['pid'], signal.SIGKILL)
+            except:
+                pass
+        time.sleep(2)
+    except:
+        pass
 
 # ─────────────────────────────────────────────
 # CTeProcessor
@@ -586,13 +637,12 @@ class CTeProcessor:
         }
 
 # ─────────────────────────────────────────────
-# GERENCIAMENTO DO CHROMEDRIVER
+# GERENCIAMENTO DO CHROMEDRIVER (ROBUSTO)
 # ─────────────────────────────────────────────
 def find_chrome_binary():
     """Encontra o binário do Chrome/Chromium instalado"""
     for binary in ['/usr/bin/chromium', '/usr/bin/google-chrome', '/usr/bin/google-chrome-stable', '/usr/bin/chromium-browser']:
         if os.path.exists(binary):
-            add_log(f"🔍 Binário encontrado: {binary}")
             return binary
     return None
 
@@ -600,7 +650,6 @@ def get_chrome_version():
     """Obtém a versão principal do Chrome/Chromium"""
     binary = find_chrome_binary()
     if not binary:
-        add_log("❌ Chrome/Chromium não encontrado")
         return None
     
     try:
@@ -610,50 +659,33 @@ def get_chrome_version():
             match = re.search(r'(\d+)\.', version_text)
             if match:
                 major_version = int(match.group(1))
-                add_log(f"📊 Versão detectada: {version_text} (v{major_version})")
                 return major_version
-    except Exception as e:
-        add_log(f"❌ Erro ao obter versão: {e}")
+    except:
+        pass
     
     return None
 
-def install_chromedriver_apt():
-    """Tenta instalar o chromedriver via apt-get"""
+def download_chromedriver_chrome_for_testing(chrome_version):
+    """Baixa o ChromeDriver da API Chrome for Testing (Chrome 115+)"""
     try:
-        add_log("🔧 Tentando instalar chromedriver via apt...")
-        result = subprocess.run(
-            ['sudo', 'apt-get', 'install', '-y', 'chromium-driver'],
-            capture_output=True, text=True, timeout=60
-        )
-        if result.returncode == 0:
-            add_log("✅ chromium-driver instalado com sucesso")
-            return True
-        else:
-            add_log(f"⚠️ Falha na instalação: {result.stderr[:100]}")
-            return False
-    except Exception as e:
-        add_log(f"❌ Erro ao instalar: {e}")
-        return False
-
-def download_chromedriver_manually(chrome_version):
-    """Baixa o ChromeDriver compatível com a versão do Chrome"""
-    try:
-        # Chrome 115+ usa nova API
         api_url = "https://googlechromelabs.github.io/chrome-for-testing/latest-versions-per-milestone-with-downloads.json"
-        add_log(f"🌐 Buscando ChromeDriver para versão {chrome_version}...")
+        add_log(f"🌐 Buscando ChromeDriver para Chrome v{chrome_version}...")
         
-        response = requests.get(api_url, timeout=10)
+        response = requests.get(api_url, timeout=15)
         data = response.json()
         
         version_key = str(chrome_version)
         if version_key not in data.get('milestones', {}):
-            add_log(f"❌ Versão {chrome_version} não disponível na API")
+            add_log(f"⚠️ Versão {chrome_version} não encontrada, tentando versão mais próxima...")
+            # Tenta versões próximas
+            for v in range(chrome_version - 2, chrome_version + 3):
+                if str(v) in data.get('milestones', {}):
+                    version_key = str(v)
+                    break
+        
+        if version_key not in data.get('milestones', {}):
             return None
         
-        full_version = data['milestones'][version_key]['version']
-        add_log(f"📋 Versão completa: {full_version}")
-        
-        # Encontrar download para linux64
         downloads = data['milestones'][version_key]['downloads'].get('chromedriver', [])
         download_url = None
         for d in downloads:
@@ -662,15 +694,13 @@ def download_chromedriver_manually(chrome_version):
                 break
         
         if not download_url:
-            add_log("❌ URL de download não encontrada")
             return None
         
-        add_log(f"📥 Baixando de: {download_url[:80]}...")
-        response = requests.get(download_url, timeout=60)
+        add_log(f"📥 Baixando ChromeDriver...")
+        response = requests.get(download_url, timeout=120)
         
-        # Extrair
-        driver_dir = tempfile.mkdtemp(prefix="chromedriver_")
-        zip_path = os.path.join(driver_dir, "chromedriver.zip")
+        driver_dir = tempfile.mkdtemp(prefix="cd_")
+        zip_path = os.path.join(driver_dir, "cd.zip")
         
         with open(zip_path, 'wb') as f:
             f.write(response.content)
@@ -678,126 +708,119 @@ def download_chromedriver_manually(chrome_version):
         with zipfile.ZipFile(zip_path, 'r') as zip_ref:
             zip_ref.extractall(driver_dir)
         
-        # Encontrar o chromedriver extraído
         for root, dirs, files in os.walk(driver_dir):
             for file in files:
                 if file == 'chromedriver':
                     driver_path = os.path.join(root, file)
                     os.chmod(driver_path, 0o755)
-                    add_log(f"✅ ChromeDriver {full_version} baixado e configurado")
                     return driver_path
         
-        add_log("❌ chromedriver não encontrado no ZIP")
         return None
         
     except Exception as e:
-        add_log(f"❌ Erro no download manual: {str(e)[:100]}")
+        add_log(f"❌ Erro download: {str(e)[:80]}")
         return None
 
-def get_driver(download_path):
-    """Cria e retorna uma instância do WebDriver"""
-    add_log("🚀 Inicializando WebDriver...")
+def create_driver_with_retry(download_path, max_retries=3):
+    """Cria o driver com tentativas e recuperação"""
     
     chrome_binary = find_chrome_binary()
     if not chrome_binary:
-        raise Exception("Chrome/Chromium não encontrado. Instale com: sudo apt-get install chromium")
+        raise Exception("Chrome/Chromium não encontrado")
     
     chrome_version = get_chrome_version()
     if not chrome_version:
-        raise Exception("Não foi possível detectar a versão do Chrome")
+        raise Exception("Versão do Chrome não detectada")
     
-    # Configurar opções
-    opts = Options()
-    opts.binary_location = chrome_binary
-    opts.add_argument("--headless=new")
-    opts.add_argument("--window-size=1920,1080")
-    opts.add_argument("--no-sandbox")
-    opts.add_argument("--disable-dev-shm-usage")
-    opts.add_argument("--disable-gpu")
-    opts.add_argument("--disable-software-rasterizer")
-    opts.add_argument("--disable-extensions")
-    opts.add_argument("--disable-infobars")
-    opts.add_argument("--disable-notifications")
-    opts.add_argument("--disable-popup-blocking")
-    opts.add_argument("--disable-blink-features=AutomationControlled")
-    opts.add_experimental_option("excludeSwitches", ["enable-automation"])
-    opts.add_experimental_option('useAutomationExtension', False)
-    
-    prefs = {
-        "download.default_directory": download_path,
-        "download.prompt_for_download": False,
-        "download.directory_upgrade": True,
-        "safebrowsing.enabled": True,
-        "profile.default_content_setting_values.automatic_downloads": 1,
-        "credentials_enable_service": False,
-        "profile.password_manager_enabled": False
-    }
-    opts.add_experimental_option("prefs", prefs)
-    
-    # Estratégia 1: Tentar usar chromedriver do sistema primeiro
-    system_drivers = [
-        '/usr/bin/chromedriver',
-        '/usr/lib/chromium-browser/chromedriver',
-        '/usr/lib/chromium/chromedriver'
-    ]
-    
-    for driver_path in system_drivers:
-        if os.path.exists(driver_path):
-            try:
-                add_log(f"🔄 Tentando driver do sistema: {driver_path}")
+    for attempt in range(max_retries):
+        try:
+            if attempt > 0:
+                add_log(f"🔄 Tentativa {attempt + 1}/{max_retries} de criar driver...")
+                kill_chrome_processes()
+                time.sleep(3)
+            
+            opts = Options()
+            opts.binary_location = chrome_binary
+            opts.add_argument("--headless=new")
+            opts.add_argument("--window-size=1920,1080")
+            opts.add_argument("--no-sandbox")
+            opts.add_argument("--disable-dev-shm-usage")
+            opts.add_argument("--disable-gpu")
+            opts.add_argument("--disable-software-rasterizer")
+            opts.add_argument("--disable-extensions")
+            opts.add_argument("--disable-infobars")
+            opts.add_argument("--disable-notifications")
+            opts.add_argument("--disable-popup-blocking")
+            opts.add_argument("--disable-blink-features=AutomationControlled")
+            opts.add_argument("--disable-web-security")
+            opts.add_argument("--disable-features=VizDisplayCompositor")
+            opts.add_argument("--disable-background-networking")
+            opts.add_argument("--disable-sync")
+            opts.add_argument("--disable-default-apps")
+            opts.add_argument("--disable-translate")
+            opts.add_argument("--metrics-recording-only")
+            opts.add_argument("--mute-audio")
+            opts.add_argument("--no-first-run")
+            opts.add_argument("--safebrowsing-disable-auto-update")
+            
+            # Configurar memória para evitar crashes
+            opts.add_argument("--max_old_space_size=4096")
+            opts.add_argument("--disable-javascript-harmony-shipping")
+            opts.add_argument("--js-flags=--max-old-space-size=4096")
+            
+            opts.add_experimental_option("excludeSwitches", ["enable-automation"])
+            opts.add_experimental_option('useAutomationExtension', False)
+            
+            prefs = {
+                "download.default_directory": download_path,
+                "download.prompt_for_download": False,
+                "download.directory_upgrade": True,
+                "safebrowsing.enabled": True,
+                "profile.default_content_setting_values.automatic_downloads": 1,
+                "credentials_enable_service": False,
+                "profile.password_manager_enabled": False
+            }
+            opts.add_experimental_option("prefs", prefs)
+            
+            # Tentar chromedriver do sistema primeiro
+            system_drivers = ['/usr/bin/chromedriver', '/usr/lib/chromium-browser/chromedriver']
+            for driver_path in system_drivers:
+                if os.path.exists(driver_path):
+                    try:
+                        service = Service(executable_path=driver_path)
+                        driver = webdriver.Chrome(service=service, options=opts)
+                        return driver
+                    except:
+                        continue
+            
+            # Baixar driver compatível
+            driver_path = download_chromedriver_chrome_for_testing(chrome_version)
+            if driver_path:
                 service = Service(executable_path=driver_path)
                 driver = webdriver.Chrome(service=service, options=opts)
-                add_log("✅ Driver do sistema funcionou")
                 return driver
-            except Exception as e:
-                add_log(f"⚠️ Driver do sistema falhou: {str(e)[:80]}")
-    
-    # Estratégia 2: Baixar ChromeDriver compatível manualmente
-    add_log("📥 Baixando ChromeDriver compatível...")
-    manual_driver = download_chromedriver_manually(chrome_version)
-    
-    if manual_driver and os.path.exists(manual_driver):
-        try:
-            service = Service(executable_path=manual_driver)
-            driver = webdriver.Chrome(service=service, options=opts)
-            add_log("✅ Driver manual funcionou")
-            return driver
+            else:
+                raise Exception("Não foi possível obter o ChromeDriver")
+                
         except Exception as e:
-            add_log(f"⚠️ Driver manual falhou: {str(e)[:80]}")
+            add_log(f"⚠️ Tentativa {attempt + 1} falhou: {str(e)[:80]}")
+            if attempt == max_retries - 1:
+                raise
     
-    # Estratégia 3: Tentar instalar via apt
-    add_log("📦 Tentando instalar chromedriver via apt...")
-    if install_chromedriver_apt():
-        for driver_path in system_drivers:
-            if os.path.exists(driver_path):
-                try:
-                    service = Service(executable_path=driver_path)
-                    driver = webdriver.Chrome(service=service, options=opts)
-                    add_log("✅ Driver instalado via apt funcionou")
-                    return driver
-                except:
-                    continue
-    
-    # Se nada funcionar, erro detalhado
-    raise Exception(f"""
-    Não foi possível configurar o ChromeDriver para Chrome {chrome_version}.
-    
-    Tente executar no terminal:
-    sudo apt-get update
-    sudo apt-get install -y chromium-driver
-    
-    Ou verifique a instalação em:
-    https://chromedriver.chromium.org/
-    """)
+    raise Exception("Falha ao criar driver após múltiplas tentativas")
 
-def esperar_downloads(directory, timeout=120):
-    """Aguarda downloads terminarem"""
+def esperar_downloads(directory, timeout=180):
+    """Aguarda downloads terminarem com timeout estendido"""
     start = time.time()
     while time.time() - start < timeout:
-        if not list(Path(directory).glob('*.crdownload')):
-            return True
-        time.sleep(1)
-    return False
+        crdownloads = list(Path(directory).glob('*.crdownload'))
+        if not crdownloads:
+            # Verificar se tem arquivos ZIP
+            zips = list(Path(directory).glob('*.zip'))
+            if zips:
+                return True
+        time.sleep(2)
+    return len(list(Path(directory).glob('*.zip'))) > 0
 
 # ─────────────────────────────────────────────
 # NAV BAR
@@ -805,7 +828,7 @@ def esperar_downloads(directory, timeout=120):
 st.markdown("""
 <div class="nav-bar">
     <div class="nav-logo">MASTER<em>SAF</em> <span style="color:#334155;font-weight:300;">//</span></div>
-    <div class="nav-badge">⚡ AUTOMAÇÃO FISCAL v2</div>
+    <div class="nav-badge">⚡ AUTOMAÇÃO FISCAL v3 — MODO LONGA DURAÇÃO</div>
 </div>
 """, unsafe_allow_html=True)
 
@@ -816,7 +839,10 @@ st.markdown("""
 <div class="hero-wrap">
     <div class="hero-eyebrow">Sistema de Automação CT-e</div>
     <h1 class="hero-h1">Download e <span>processamento</span><br>de XMLs em massa</h1>
-    <p class="hero-sub">Configure as credenciais, período e parâmetros abaixo. O sistema baixa, extrai e consolida todos os CT-es em um Excel formatado.</p>
+    <p class="hero-sub">
+        Motor otimizado para processar <strong>1000+ páginas sem interrupções</strong>.
+        Sistema de recuperação automática contra falhas de rede e memória.
+    </p>
 </div>
 """, unsafe_allow_html=True)
 
@@ -844,286 +870,391 @@ with col_a:
 with col_b:
     st.markdown('<div class="card"><div class="card-title">⚙️ Parâmetros de Execução</div>', unsafe_allow_html=True)
     qtd_loops = st.number_input(
-        "Quantidade de Páginas (Loops)",
-        min_value=1, max_value=1000, value=5,
-        help="Cada loop processa uma página de até 200 CT-es."
+        "Quantidade de Páginas",
+        min_value=1, max_value=5000, value=1000,
+        help="Para 1000 páginas, estimativa de 4-6 horas de execução."
     )
+    
+    intervalo_seguranca = st.number_input(
+        "Intervalo entre páginas (segundos)",
+        min_value=1, max_value=30, value=8,
+        help="Maior intervalo = mais estabilidade. Recomendado: 8-10s para 1000+ páginas."
+    )
+    
     st.markdown("<br>", unsafe_allow_html=True)
     gerar_excel = st.checkbox("Gerar Excel consolidado dos CT-es", value=True)
     gerar_zip   = st.checkbox("Disponibilizar ZIP com XMLs brutos", value=True)
     st.markdown('</div>', unsafe_allow_html=True)
 
-    st.markdown('<div class="card" style="margin-top:1.5rem"><div class="card-title">🚀 Executar</div>', unsafe_allow_html=True)
-    st.markdown("""
-    <p style="font-size:0.82rem;color:#475569;margin-bottom:1rem;line-height:1.6;">
-        O navegador será executado em <strong style="color:#94a3b8">modo headless</strong> (invisível).
-        Você pode acompanhar o progresso abaixo em tempo real.
-    </p>
-    """, unsafe_allow_html=True)
-    iniciar = st.button("⚡  Iniciar Automação", key="btn_iniciar")
+    st.markdown('<div class="card" style="margin-top:1.5rem"><div class="card-title">🚀 Controle de Execução</div>', unsafe_allow_html=True)
+    
+    col_btn1, col_btn2 = st.columns(2)
+    with col_btn1:
+        iniciar = st.button("⚡ Iniciar Automação", key="btn_iniciar", disabled=st.session_state.execucao_ativa)
+    with col_btn2:
+        parar = st.button("🛑 Parar Execução", key="btn_parar", disabled=not st.session_state.execucao_ativa)
+    
+    if st.session_state.execucao_ativa:
+        st.markdown('<span class="safety-badge safety-ok">🟢 SISTEMA EM EXECUÇÃO</span>', unsafe_allow_html=True)
+    else:
+        st.markdown('<span class="safety-badge safety-warn">⚪ SISTEMA EM ESPERA</span>', unsafe_allow_html=True)
+    
     st.markdown('</div>', unsafe_allow_html=True)
 
 st.markdown('</div>', unsafe_allow_html=True)
 
 # ─────────────────────────────────────────────
-# EXECUÇÃO
+# EXECUÇÃO PRINCIPAL (OTIMIZADA PARA 1000+ PÁGINAS)
 # ─────────────────────────────────────────────
-if iniciar:
+if iniciar and not st.session_state.execucao_ativa:
     if not usuario or not senha:
         st.error("⚠️ Preencha o usuário e a senha para continuar.")
     else:
-        # Limpa logs anteriores
+        st.session_state.execucao_ativa = True
         st.session_state.ms_logs = []
+        st.session_state.progresso_atual = 0
         
-        dl_path = tempfile.mkdtemp(prefix="mastersaf_web_")
+        dl_path = tempfile.mkdtemp(prefix="mastersaf_")
         st.session_state.download_path = dl_path
 
         st.markdown('<div class="divider"><hr></div>', unsafe_allow_html=True)
         st.markdown("""
         <div class="exec-wrap">
-            <div class="exec-header"><span class="dot"></span>Execução em Tempo Real</div>
+            <div class="exec-header"><span class="dot"></span>Execução em Tempo Real — Modo Longa Duração</div>
         </div>
         """, unsafe_allow_html=True)
 
-        with st.container():
-            status_box   = st.info("⏳ Inicializando ambiente e navegador...")
-            progress_bar = st.progress(0)
-            log_area     = st.empty()
+        # Placeholders para UI
+        status_placeholder = st.empty()
+        progress_placeholder = st.empty()
+        log_placeholder = st.empty()
+        stats_placeholder = st.empty()
         
-        def update_log():
-            log_area.code("\n".join(st.session_state.ms_logs[-35:]), language=None)
-
         driver = None
+        total_paginas_processadas = 0
+        reinicios_driver = 0
+        MAX_REINICIOS = 5
+        PAGINAS_POR_SESSAO = 50  # Reiniciar driver a cada 50 páginas
+        
+        def update_ui():
+            """Atualiza todos os elementos da UI"""
+            with status_placeholder.container():
+                if st.session_state.execucao_ativa:
+                    st.info(f"⏳ Processando... {total_paginas_processadas} de {int(qtd_loops)} páginas | Driver reiniciado {reinicios_driver}x")
+            
+            with progress_placeholder.container():
+                if int(qtd_loops) > 0:
+                    st.progress(min(total_paginas_processadas / int(qtd_loops), 1.0))
+            
+            with log_placeholder.container():
+                st.code("\n".join(st.session_state.ms_logs[-40:]), language=None)
+        
+        def executar_ciclo_download(driver, pagina_atual, total_paginas):
+            """Executa um ciclo de download para uma página"""
+            try:
+                # Selecionar todos os checkboxes
+                try:
+                    cb = WebDriverWait(driver, 10).until(
+                        EC.element_to_be_clickable((By.XPATH, '//*[@id="jqgh_listagem_checkBox"]/div/input'))
+                    )
+                    if not cb.is_selected():
+                        cb.click()
+                    time.sleep(2)
+                except:
+                    add_log(f"   ⚠️ Checkbox não encontrado na página {pagina_atual}")
+                    return False
+                
+                # Iniciar download em massa
+                try:
+                    btn_xml = WebDriverWait(driver, 10).until(
+                        EC.element_to_be_clickable((By.XPATH, '//*[@id="xml_multiplos"]/h3'))
+                    )
+                    driver.execute_script("arguments[0].click();", btn_xml)
+                    time.sleep(2)
+                    
+                    btn_download = WebDriverWait(driver, 10).until(
+                        EC.element_to_be_clickable((By.XPATH, '//*[@id="downloadEmMassaXml"]'))
+                    )
+                    driver.execute_script("arguments[0].click();", btn_download)
+                    add_log(f"   📥 Download página {pagina_atual} iniciado")
+                except:
+                    add_log(f"   ⚠️ Botão download não encontrado na página {pagina_atual}")
+                    return False
+                
+                # Aguardar download
+                if esperar_downloads(dl_path, timeout=180):
+                    add_log(f"   ✅ Página {pagina_atual} concluída")
+                    time.sleep(1)
+                    
+                    # Desmarcar checkbox
+                    try:
+                        cb = driver.find_element(By.XPATH, '//*[@id="jqgh_listagem_checkBox"]/div/input')
+                        if cb.is_selected():
+                            cb.click()
+                    except:
+                        pass
+                    
+                    return True
+                else:
+                    add_log(f"   ⚠️ Timeout no download da página {pagina_atual}")
+                    return False
+                    
+            except Exception as e:
+                add_log(f"   ❌ Erro na página {pagina_atual}: {str(e)[:80]}")
+                return False
+        
         try:
-            # Inicializar driver
-            driver = get_driver(dl_path)
-            update_log()
-            progress_bar.progress(0.05)
-
+            update_ui()
+            
+            # Criar driver inicial
+            add_log("🚀 Inicializando navegador...")
+            driver = create_driver_with_retry(dl_path)
+            update_ui()
+            
             # Login
-            status_box.info("🔑 Autenticando no MasterSAF...")
-            add_log("🔗 Acessando página de login...")
+            add_log("🔑 Realizando login...")
             driver.get("https://p.dfe.mastersaf.com.br/mvc/login")
-            time.sleep(3)
+            time.sleep(5)
             
             driver.find_element(By.XPATH, '//*[@id="nomeusuario"]').send_keys(usuario)
             driver.find_element(By.XPATH, '//*[@id="senha"]').send_keys(senha)
-            driver.execute_script("arguments[0].click();",
-                driver.find_element(By.XPATH, '//*[@id="enter"]'))
+            driver.find_element(By.XPATH, '//*[@id="enter"]').click()
             time.sleep(5)
-            add_log("✅ Login realizado com sucesso")
-            progress_bar.progress(0.10)
-            update_log()
-
+            add_log("✅ Login realizado")
+            update_ui()
+            
             # Navegar para listagem
-            status_box.info("📋 Navegando até Listagem de CT-es...")
+            add_log("📋 Acessando listagem de CT-es...")
             driver.execute_script("arguments[0].click();",
                 driver.find_element(By.XPATH, '//*[@id="linkListagemReceptorCTEs"]/a'))
             time.sleep(5)
-            add_log("📋 Módulo Listagem Receptor CT-es acessado")
-            progress_bar.progress(0.15)
-            update_log()
-
+            update_ui()
+            
             # Configurar datas
             add_log(f"📅 Período: {data_ini} → {data_fin}")
             for xpath, val in [
                 ('//*[@id="consultaDataInicial"]', data_ini),
-                ('//*[@id="consultaDataFinal"]',   data_fin),
+                ('//*[@id="consultaDataFinal"]', data_fin),
             ]:
                 el = driver.find_element(By.XPATH, xpath)
-                el.click()
-                el.send_keys(Keys.CONTROL, 'a')
-                el.send_keys(Keys.BACKSPACE)
+                el.clear()
                 el.send_keys(val)
-            time.sleep(1)
-            update_log()
-
+            time.sleep(2)
+            
             # Atualizar listagem
-            status_box.info("🔄 Atualizando listagem...")
-            driver.execute_script("arguments[0].click();",
-                driver.find_element(By.XPATH, '//*[@id="listagem_atualiza"]'))
+            driver.find_element(By.XPATH, '//*[@id="listagem_atualiza"]').click()
             time.sleep(5)
-            progress_bar.progress(0.20)
-            update_log()
-
-            # Configurar 200 itens por página
-            add_log("⚙️ Configurando 200 itens por página...")
-            sel = driver.find_element(
-                By.XPATH, '//*[@id="plistagem_center"]/table/tbody/tr/td[8]/select')
-            sel.click()
-            time.sleep(1)
-            sel.find_element(By.XPATH, './/option[@value="200"]').click()
-            time.sleep(3)
-            progress_bar.progress(0.25)
-            update_log()
-
-            # Loop de download
-            add_log(f"📥 Iniciando download — {int(qtd_loops)} página(s)")
-            update_log()
-
-            for i in range(int(qtd_loops)):
-                add_log(f"━━ Página {i + 1} / {int(qtd_loops)}")
-                update_log()
+            
+            # Configurar 200 itens
+            try:
+                sel = driver.find_element(By.XPATH, '//*[@id="plistagem_center"]/table/tbody/tr/td[8]/select')
+                sel.click()
+                time.sleep(1)
+                sel.find_element(By.XPATH, './/option[@value="200"]').click()
+                time.sleep(3)
+                add_log("⚙️ Configurado 200 itens/página")
+            except:
+                add_log("⚠️ Não foi possível configurar 200 itens/página")
+            
+            update_ui()
+            
+            # Loop principal
+            pagina = 0
+            while pagina < int(qtd_loops) and st.session_state.execucao_ativa:
                 
-                # Selecionar tudo
-                try:
-                    cb = driver.find_element(
-                        By.XPATH, '//*[@id="jqgh_listagem_checkBox"]/div/input')
-                    if not cb.is_selected():
-                        cb.click()
-                    time.sleep(2)
-                except Exception:
-                    add_log("   ⚠ Não foi possível selecionar checkboxes")
-
-                # Download em massa
-                try:
-                    driver.execute_script("arguments[0].click();",
-                        driver.find_element(By.XPATH, '//*[@id="xml_multiplos"]/h3'))
-                    time.sleep(2)
-                    driver.execute_script("arguments[0].click();",
-                        driver.find_element(By.XPATH, '//*[@id="downloadEmMassaXml"]'))
-                    add_log("   📥 Download iniciado...")
-                except Exception:
-                    add_log("   ⚠ Botão de download não encontrado")
-
-                # Aguardar download
-                esperar_downloads(dl_path, timeout=120)
-                time.sleep(2)
-                add_log("   ✅ Download concluído")
-                update_log()
-
-                # Desmarcar
-                try:
-                    cb = driver.find_element(
-                        By.XPATH, '//*[@id="jqgh_listagem_checkBox"]/div/input')
-                    if cb.is_selected():
-                        cb.click()
-                    time.sleep(1)
-                except Exception:
-                    pass
-
-                # Próxima página
-                if i < int(qtd_loops) - 1:
+                # Verificar se precisa reiniciar o driver
+                if pagina > 0 and pagina % PAGINAS_POR_SESSAO == 0:
+                    add_log(f"🔄 Reiniciando driver (página {pagina})...")
                     try:
-                        driver.find_element(
-                            By.XPATH, '//*[@id="next_plistagem"]/span').click()
-                        time.sleep(5)
-                    except Exception:
-                        add_log("   ⚠ Fim das páginas disponíveis")
+                        driver.quit()
+                    except:
+                        pass
+                    kill_chrome_processes()
+                    time.sleep(5)
+                    driver = create_driver_with_retry(dl_path)
+                    reinicios_driver += 1
+                    
+                    # Refazer login e navegação
+                    driver.get("https://p.dfe.mastersaf.com.br/mvc/login")
+                    time.sleep(3)
+                    driver.find_element(By.XPATH, '//*[@id="nomeusuario"]').send_keys(usuario)
+                    driver.find_element(By.XPATH, '//*[@id="senha"]').send_keys(senha)
+                    driver.find_element(By.XPATH, '//*[@id="enter"]').click()
+                    time.sleep(5)
+                    driver.execute_script("arguments[0].click();",
+                        driver.find_element(By.XPATH, '//*[@id="linkListagemReceptorCTEs"]/a'))
+                    time.sleep(5)
+                    
+                    # Reconfigurar
+                    for xpath, val in [
+                        ('//*[@id="consultaDataInicial"]', data_ini),
+                        ('//*[@id="consultaDataFinal"]', data_fin),
+                    ]:
+                        el = driver.find_element(By.XPATH, xpath)
+                        el.clear()
+                        el.send_keys(val)
+                    time.sleep(2)
+                    driver.find_element(By.XPATH, '//*[@id="listagem_atualiza"]').click()
+                    time.sleep(5)
+                    
+                    # Navegar até a página atual
+                    for _ in range(pagina):
+                        try:
+                            driver.find_element(By.XPATH, '//*[@id="next_plistagem"]/span').click()
+                            time.sleep(3)
+                        except:
+                            break
+                
+                # Processar página atual
+                add_log(f"━━━ Página {pagina + 1}/{int(qtd_loops)} ━━━")
+                update_ui()
+                
+                sucesso = executar_ciclo_download(driver, pagina + 1, int(qtd_loops))
+                
+                if sucesso:
+                    total_paginas_processadas += 1
+                
+                # Intervalo de segurança
+                add_log(f"⏸️ Aguardando {int(intervalo_seguranca)}s...")
+                update_ui()
+                
+                for _ in range(int(intervalo_seguranca)):
+                    if not st.session_state.execucao_ativa:
                         break
-
-                pct = 0.25 + ((i + 1) / int(qtd_loops)) * 0.55
-                progress_bar.progress(pct)
-                status_box.info(f"⏳ Baixando — {i + 1} de {int(qtd_loops)} páginas")
-
-            add_log("✅ Downloads finalizados")
+                    time.sleep(1)
+                
+                # Próxima página
+                if pagina < int(qtd_loops) - 1 and st.session_state.execucao_ativa:
+                    try:
+                        next_btn = WebDriverWait(driver, 10).until(
+                            EC.element_to_be_clickable((By.XPATH, '//*[@id="next_plistagem"]/span'))
+                        )
+                        next_btn.click()
+                        time.sleep(3)
+                        pagina += 1
+                    except:
+                        add_log("⚠️ Não foi possível avançar para próxima página")
+                        break
+                else:
+                    pagina += 1
+                
+                update_ui()
+            
+            # Finalização
             if driver:
-                driver.quit()
-                driver = None
-            progress_bar.progress(0.80)
-            update_log()
-
-            # ── Processamento ──────────────────────────
+                try:
+                    driver.quit()
+                except:
+                    pass
+            kill_chrome_processes()
+            
+            add_log(f"✅ Downloads concluídos! {total_paginas_processadas} páginas processadas")
+            st.session_state.execucao_ativa = False
+            update_ui()
+            
+            # Processamento dos XMLs
             processor = CTeProcessor()
             zip_found = list(Path(dl_path).glob('*.zip'))
-            add_log(f"🔍 {len(zip_found)} arquivo(s) ZIP encontrado(s)")
-            update_log()
-
+            add_log(f"📊 {len(zip_found)} arquivos ZIP encontrados")
+            
             if gerar_excel and zip_found:
-                status_box.info("📊 Processando XMLs...")
                 processor.process_directory(dl_path, add_log)
-                add_log(f"📊 CT-es processados: {len(processor.processed_data)}")
-                update_log()
-            progress_bar.progress(0.92)
-
-            # Gerar ZIP de XMLs brutos
+                add_log(f"📊 Total CT-es processados: {len(processor.processed_data)}")
+            
+            # Gerar ZIP de saída
             zip_buf = None
             if gerar_zip and zip_found:
-                add_log("📦 Compactando XMLs brutos...")
-                update_log()
                 buf_io = io.BytesIO()
                 with zipfile.ZipFile(buf_io, 'w', zipfile.ZIP_DEFLATED) as zipf:
                     for root_dir, _, files in os.walk(dl_path):
                         for file in files:
-                            file_path = os.path.join(root_dir, file)
-                            zipf.write(file_path, file)
+                            zipf.write(os.path.join(root_dir, file), file)
                 buf_io.seek(0)
                 zip_buf = buf_io.getvalue()
-                add_log("✅ ZIP criado com sucesso")
-
-            progress_bar.progress(1.0)
-            status_box.success("✅ Automação concluída com sucesso!")
-            add_log("🏁 Pipeline completo")
-            update_log()
-
-            # Limpar diretório temporário
-            shutil.rmtree(dl_path, ignore_errors=True)
-
-            # ── Estatísticas ───────────────────────────
+            
+            update_ui()
+            
+            # Exibir estatísticas
             if gerar_excel and processor.processed_data:
                 summ = processor.summary()
-                st.markdown('<div class="divider"><hr></div>', unsafe_allow_html=True)
-                st.markdown(f"""
-                <div class="stat-grid">
-                    <div class="stat-card">
-                        <div class="stat-label">CT-es Processados</div>
-                        <div class="stat-value">{summ['total']:,}</div>
-                        <div class="stat-sub">documentos fiscais</div>
+                with stats_placeholder.container():
+                    st.markdown('<div class="divider"><hr></div>', unsafe_allow_html=True)
+                    st.markdown(f"""
+                    <div class="stat-grid">
+                        <div class="stat-card">
+                            <div class="stat-label">Páginas Processadas</div>
+                            <div class="stat-value">{total_paginas_processadas:,}</div>
+                            <div class="stat-sub">de {int(qtd_loops)} planejadas</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-label">CT-es Extraídos</div>
+                            <div class="stat-value">{summ['total']:,}</div>
+                            <div class="stat-sub">documentos fiscais</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-label">Peso Bruto Total</div>
+                            <div class="stat-value">{summ['peso_total']:,.0f}</div>
+                            <div class="stat-sub">quilogramas</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-label">Valor Total</div>
+                            <div class="stat-value">R$ {summ['valor_total']:,.2f}</div>
+                            <div class="stat-sub">prestação de serviço</div>
+                        </div>
                     </div>
-                    <div class="stat-card">
-                        <div class="stat-label">Peso Bruto Total</div>
-                        <div class="stat-value">{summ['peso_total']:,.0f}</div>
-                        <div class="stat-sub">quilogramas</div>
-                    </div>
-                    <div class="stat-card">
-                        <div class="stat-label">Valor Total</div>
-                        <div class="stat-value">R$ {summ['valor_total']:,.2f}</div>
-                        <div class="stat-sub">prestação de serviço</div>
-                    </div>
-                    <div class="stat-card">
-                        <div class="stat-label">Emitentes Únicos</div>
-                        <div class="stat-value">{summ['emitentes']}</div>
-                        <div class="stat-sub">transportadoras</div>
-                    </div>
-                </div>
-                """, unsafe_allow_html=True)
-
-            # ── Botões de Download ────────────────────
+                    """, unsafe_allow_html=True)
+            
+            # Botões de download
             if gerar_excel or (gerar_zip and zip_buf):
                 st.markdown('<div class="divider"><hr></div>', unsafe_allow_html=True)
-                col1, col2 = st.columns(2, gap="large")
-
+                col1, col2 = st.columns(2)
+                
                 with col1:
                     if gerar_excel and processor.processed_data:
                         excel_bytes, n_reg = processor.export_to_excel_bytes()
                         if excel_bytes:
                             ts = datetime.now().strftime("%Y%m%d_%H%M%S")
                             st.download_button(
-                                label=f"📊 Download Excel — {n_reg} CT-es",
+                                label=f"📊 Excel — {n_reg} CT-es",
                                 data=excel_bytes,
-                                file_name=f"CTe_Processados_{ts}.xlsx",
+                                file_name=f"CTe_{ts}.xlsx",
                                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                             )
-                    elif gerar_excel:
-                        st.warning("Nenhum CT-e encontrado nos arquivos")
-
+                
                 with col2:
                     if gerar_zip and zip_buf:
                         st.download_button(
-                            label="📥 Download ZIP — XMLs brutos",
+                            label="📥 ZIP XMLs brutos",
                             data=zip_buf,
                             file_name="XMLs_MasterSaf.zip",
                             mime="application/zip",
                         )
-
+            
+            # Limpeza
+            shutil.rmtree(dl_path, ignore_errors=True)
+            add_log("🏁 Pipeline finalizado com sucesso")
+            update_ui()
+            
         except Exception as e:
-            st.error(f"❌ Erro técnico: {str(e)[:300]}")
-            add_log(f"❌ EXCEÇÃO: {str(e)[:200]}")
-            update_log()
+            add_log(f"❌ ERRO CRÍTICO: {str(e)[:200]}")
+            st.session_state.execucao_ativa = False
+            update_ui()
+            
             if driver:
                 try:
                     driver.quit()
                 except:
                     pass
+            kill_chrome_processes()
+            
             if 'dl_path' in locals() and os.path.exists(dl_path):
                 shutil.rmtree(dl_path, ignore_errors=True)
+            
+            st.error(f"❌ A execução foi interrompida. Verifique os logs acima.")
+
+# Botão de parada
+if parar and st.session_state.execucao_ativa:
+    st.session_state.execucao_ativa = False
+    add_log("🛑 PARADA SOLICITADA - Finalizando ciclo atual...")
+    st.warning("Parada solicitada. O sistema finalizará o ciclo atual e encerrará.")
+    st.rerun()
