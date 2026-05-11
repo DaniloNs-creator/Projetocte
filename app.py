@@ -36,6 +36,8 @@ from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
 import subprocess
+import concurrent.futures
+import threading
 
 # ==============================================================================
 # CONFIGURAÇÃO AUTOMÁTICA DO SERVIDOR STREAMLIT
@@ -70,6 +72,30 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # ==============================================================================
+# COMPAT HELPER — use_container_width foi deprecated no Streamlit ≥ 1.43
+# Centralizamos aqui para não tocar na lógica de negócio.
+# ==============================================================================
+def _w(stretch: bool = True):
+    """Retorna o argumento correto de largura para widgets Streamlit.
+
+    Streamlit ≥ 1.43 removeu use_container_width e introduziu width=.
+    Fazemos introspection na versão instalada para garantir compatibilidade.
+    """
+    try:
+        import streamlit as _st
+        ver = tuple(int(x) for x in _st.__version__.split(".")[:2])
+        if ver >= (1, 43):
+            return {"width": "stretch" if stretch else "content"}
+        else:
+            return {"use_container_width": stretch}
+    except Exception:
+        # fallback seguro: tenta o parâmetro novo
+        return {"width": "stretch" if stretch else "content"}
+
+_WS = _w(True)   # width stretch — substitui use_container_width=True
+_WC = _w(False)  # width content — substitui use_container_width=False
+
+# ==============================================================================
 # SESSION STATE
 # ==============================================================================
 _defaults = {
@@ -77,10 +103,10 @@ _defaults = {
     'parsed_duimp': None, 'parsed_sigraweb': None,
     'merged_df': None, 'last_duimp': None,
     'layout_app2': 'sigraweb',
-    # MasterSAF session state
     'ms_logs': [],
     'ms_download_path': None,
     'ms_processed_data': [],
+    'ms_zip_bytes': None,
 }
 for k, v in _defaults.items():
     if k not in st.session_state:
@@ -98,25 +124,27 @@ def show_loading_animation(message="Processando..."):
         pb.empty()
 
 def show_processing_animation(message="Analisando dados..."):
-    ph = st.empty()
-    with ph.container():
+    ph_container = st.empty()
+    with ph_container.container():
         _, c, _ = st.columns([1, 2, 1])
         with c:
             st.info(f"⏳ {message}")
             sp = st.empty()
             chars = ["⣾","⣽","⣻","⢿","⡿","⣟","⣯","⣷"]
             for i in range(20):
-                sp.markdown(f"<div style='text-align:center;font-size:24px'>{chars[i%8]}</div>",
-                            unsafe_allow_html=True)
+                sp.markdown(
+                    f"<div style='text-align:center;font-size:24px'>{chars[i%8]}</div>",
+                    unsafe_allow_html=True,
+                )
                 time.sleep(0.1)
-    ph.empty()
+    ph_container.empty()
 
 def show_success_animation(message="Concluído!"):
-    ph = st.empty()
-    with ph.container():
+    ph_container = st.empty()
+    with ph_container.container():
         st.success(f"✅ {message}")
         time.sleep(1.2)
-    ph.empty()
+    ph_container.empty()
 
 def ph(html: str):
     """Shortcut for st.markdown with unsafe_allow_html=True"""
@@ -124,10 +152,12 @@ def ph(html: str):
 
 def page_header(icon: str, title: str, sub: str):
     ph(f"""
-    <div class="ph">
+    <div class="ph-hdr">
         <span class="ph-icon">{icon}</span>
-        <div><div class="ph-title">{title}</div>
-        <div class="ph-sub">{sub}</div></div>
+        <div>
+            <div class="ph-title">{title}</div>
+            <div class="ph-sub">{sub}</div>
+        </div>
     </div>""")
 
 def section_title(text: str):
@@ -148,228 +178,465 @@ def status_warn(text: str):
     ph(f'<div class="sbox sbox-warn">⚠️ {text}</div>')
 
 # ==============================================================================
-# CSS
+# CSS — DESIGN SYSTEM PROFISSIONAL RESPONSIVO
 # ==============================================================================
 def load_css():
     ph("""<style>
+    /* ── Google Fonts ─────────────────────────────────────── */
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600&display=swap');
+
+    /* ── Design Tokens ────────────────────────────────────── */
     :root{
-        --navy:#0F172A; --blue:#1E3A8A; --blue-m:#2563EB; --blue-l:#3B82F6;
-        --blue-bg:#EFF6FF; --blue-b:#BFDBFE;
-        --green:#059669; --green-bg:#D1FAE5;
-        --amber:#D97706; --amber-bg:#FEF3C7;
+        --navy:#0A0F1E;
+        --blue-dark:#0F2040;
+        --blue:#1E3A8A;
+        --blue-m:#2563EB;
+        --blue-l:#3B82F6;
+        --blue-xl:#60A5FA;
+        --blue-bg:#EFF6FF;
+        --blue-b:#BFDBFE;
+        --green:#059669;
+        --green-l:#10B981;
+        --green-bg:#D1FAE5;
+        --amber:#D97706;
+        --amber-bg:#FEF3C7;
         --red:#DC2626;
-        --bg:#F1F5F9; --surface:#FFFFFF;
-        --border:#E2E8F0; --muted:#64748B;
-        --r:8px; --r-lg:16px; --r-xl:22px;
-        --sh0:0 1px 2px rgba(0,0,0,.05);
-        --sh1:0 1px 3px rgba(0,0,0,.08),0 1px 2px rgba(0,0,0,.05);
-        --sh2:0 4px 16px rgba(0,0,0,.10);
-        --sh3:0 12px 36px rgba(0,0,0,.14);
-        --tr:all .18s cubic-bezier(.4,0,.2,1);
-        --glow:0 0 0 3px rgba(59,130,246,.20);
+        --red-bg:#FEE2E2;
+        --bg:#F0F4FA;
+        --surface:#FFFFFF;
+        --surface2:#F8FAFC;
+        --border:#E2E8F0;
+        --border-strong:#CBD5E1;
+        --muted:#64748B;
+        --muted2:#94A3B8;
+        --text:#0F172A;
+        --r:10px;
+        --r-lg:16px;
+        --r-xl:24px;
+        --r-2xl:32px;
+        --sh0:0 1px 3px rgba(0,0,0,.06);
+        --sh1:0 2px 8px rgba(0,0,0,.08),0 1px 3px rgba(0,0,0,.05);
+        --sh2:0 8px 24px rgba(0,0,0,.10),0 2px 8px rgba(0,0,0,.06);
+        --sh3:0 20px 60px rgba(0,0,0,.14),0 4px 16px rgba(0,0,0,.08);
+        --sh-blue:0 8px 32px rgba(37,99,235,.20);
+        --tr:all .2s cubic-bezier(.4,0,.2,1);
+        --glow:0 0 0 3px rgba(59,130,246,.25);
+        --glow-green:0 0 0 3px rgba(16,185,129,.25);
     }
 
-    html,body,[class*="css"]{font-family:'Inter','Segoe UI',system-ui,sans-serif;-webkit-font-smoothing:antialiased;}
-    ::-webkit-scrollbar{width:5px;height:5px}
+    /* ── Base ─────────────────────────────────────────────── */
+    html,body,[class*="css"]{
+        font-family:'Inter','Segoe UI',system-ui,sans-serif;
+        -webkit-font-smoothing:antialiased;
+        color:var(--text);
+    }
+    ::-webkit-scrollbar{width:6px;height:6px}
     ::-webkit-scrollbar-track{background:var(--bg);border-radius:10px}
-    ::-webkit-scrollbar-thumb{background:#CBD5E1;border-radius:10px}
-    ::-webkit-scrollbar-thumb:hover{background:#94A3B8}
-    .block-container{padding-top:1.2rem!important}
+    ::-webkit-scrollbar-thumb{background:var(--border-strong);border-radius:10px}
+    ::-webkit-scrollbar-thumb:hover{background:var(--muted2)}
+    .block-container{padding-top:1rem!important;padding-bottom:2rem!important;max-width:1400px!important;}
 
+    /* ── HERO ──────────────────────────────────────────────── */
     .hero{
         position:relative;
-        background:linear-gradient(135deg,#0F172A 0%,#1E3A8A 52%,#1D4ED8 100%);
-        border-radius:var(--r-xl);padding:2.4rem 3rem 2rem;margin-bottom:1.4rem;
-        text-align:center;overflow:hidden;
+        background:linear-gradient(135deg,#050D1F 0%,#0F2040 35%,#1E3A8A 65%,#1D4ED8 100%);
+        border-radius:var(--r-2xl);
+        padding:2.8rem 3.5rem 2.4rem;
+        margin-bottom:1.6rem;
+        text-align:center;
+        overflow:hidden;
+        border:1px solid rgba(255,255,255,.06);
+        box-shadow:var(--sh3),var(--sh-blue);
     }
     .hero::before{
         content:'';position:absolute;inset:0;
-        background-image:linear-gradient(rgba(255,255,255,.04) 1px,transparent 1px),
-                         linear-gradient(90deg,rgba(255,255,255,.04) 1px,transparent 1px);
-        background-size:40px 40px;pointer-events:none;
+        background-image:
+            linear-gradient(rgba(255,255,255,.03) 1px,transparent 1px),
+            linear-gradient(90deg,rgba(255,255,255,.03) 1px,transparent 1px);
+        background-size:48px 48px;pointer-events:none;
     }
     .hero::after{
-        content:'';position:absolute;right:-60px;top:-60px;
-        width:260px;height:260px;border-radius:50%;
-        background:radial-gradient(circle,rgba(96,165,250,.20) 0%,transparent 70%);
+        content:'';position:absolute;right:-80px;top:-80px;
+        width:340px;height:340px;border-radius:50%;
+        background:radial-gradient(circle,rgba(96,165,250,.15) 0%,transparent 65%);
         pointer-events:none;
     }
-    .hero-logo{max-width:190px;margin-bottom:.9rem;
-               filter:drop-shadow(0 4px 14px rgba(0,0,0,.35));position:relative;z-index:1;}
-    .hero-title{font-size:2.1rem;font-weight:800;color:#fff;margin:0 0 .35rem;
-                letter-spacing:-.6px;line-height:1.15;position:relative;z-index:1;}
-    .hero-sub{font-size:.92rem;color:rgba(255,255,255,.68);margin:0 0 1.2rem;
-              position:relative;z-index:1;}
-    .hero-chips{display:flex;justify-content:center;gap:.45rem;flex-wrap:wrap;position:relative;z-index:1;}
-    .chip{display:inline-flex;align-items:center;gap:.3rem;
-          background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.22);
-          color:rgba(255,255,255,.92);border-radius:20px;padding:.2rem .72rem;
-          font-size:.75rem;font-weight:600;letter-spacing:.3px;transition:var(--tr);}
-    .chip:hover{background:rgba(255,255,255,.22);}
+    .hero-glow-left{
+        position:absolute;left:-100px;bottom:-80px;
+        width:280px;height:280px;border-radius:50%;
+        background:radial-gradient(circle,rgba(16,185,129,.10) 0%,transparent 65%);
+        pointer-events:none;
+    }
+    .hero-logo{
+        max-width:180px;margin-bottom:1rem;
+        filter:drop-shadow(0 4px 18px rgba(0,0,0,.40));
+        position:relative;z-index:1;
+        transition:var(--tr);
+    }
+    .hero-logo:hover{transform:scale(1.03);}
+    .hero-title{
+        font-size:2.2rem;font-weight:900;color:#fff;
+        margin:0 0 .4rem;letter-spacing:-.8px;
+        line-height:1.12;position:relative;z-index:1;
+        text-shadow:0 2px 12px rgba(0,0,0,.3);
+    }
+    .hero-sub{
+        font-size:.95rem;color:rgba(255,255,255,.65);
+        margin:0 0 1.4rem;position:relative;z-index:1;
+        letter-spacing:.1px;
+    }
+    .hero-chips{
+        display:flex;justify-content:center;
+        gap:.5rem;flex-wrap:wrap;position:relative;z-index:1;
+    }
+    .chip{
+        display:inline-flex;align-items:center;gap:.3rem;
+        background:rgba(255,255,255,.10);
+        border:1px solid rgba(255,255,255,.20);
+        color:rgba(255,255,255,.90);border-radius:20px;
+        padding:.22rem .8rem;font-size:.74rem;
+        font-weight:600;letter-spacing:.3px;
+        transition:var(--tr);backdrop-filter:blur(6px);
+    }
+    .chip:hover{background:rgba(255,255,255,.20);transform:translateY(-1px);}
 
-    .ph{display:flex;align-items:center;gap:.9rem;
-        background:var(--surface);border:1px solid var(--border);
-        border-radius:var(--r);padding:.9rem 1.2rem;margin-bottom:1.1rem;
-        box-shadow:var(--sh0);}
-    .ph-icon{font-size:1.9rem;flex-shrink:0;line-height:1;}
-    .ph-title{font-size:1.25rem;font-weight:800;color:var(--blue);line-height:1.2;}
-    .ph-sub{font-size:.8rem;color:var(--muted);margin-top:.1rem;}
+    /* ── PAGE HEADER ───────────────────────────────────────── */
+    .ph-hdr{
+        display:flex;align-items:center;gap:1rem;
+        background:var(--surface);
+        border:1px solid var(--border);
+        border-left:4px solid var(--blue-l);
+        border-radius:var(--r);padding:.9rem 1.4rem;
+        margin-bottom:1.2rem;box-shadow:var(--sh0);
+        transition:var(--tr);
+    }
+    .ph-hdr:hover{box-shadow:var(--sh1);border-left-color:var(--blue-m);}
+    .ph-icon{font-size:2rem;flex-shrink:0;line-height:1;}
+    .ph-title{font-size:1.3rem;font-weight:800;color:var(--blue);line-height:1.2;}
+    .ph-sub{font-size:.8rem;color:var(--muted);margin-top:.15rem;}
 
-    .stitle{display:flex;align-items:center;font-size:.92rem;font-weight:700;
-            color:var(--blue);padding:.45rem 0 .45rem .75rem;
-            border-left:3px solid var(--blue-l);margin:1rem 0 .6rem;
-            background:linear-gradient(90deg,rgba(59,130,246,.06),transparent);
-            border-radius:0 var(--r) var(--r) 0;}
+    /* ── SECTION TITLE ─────────────────────────────────────── */
+    .stitle{
+        display:flex;align-items:center;
+        font-size:.88rem;font-weight:700;
+        color:var(--blue);
+        padding:.5rem 0 .5rem .85rem;
+        border-left:3px solid var(--blue-l);
+        margin:1.1rem 0 .7rem;
+        background:linear-gradient(90deg,rgba(59,130,246,.07),transparent 80%);
+        border-radius:0 var(--r) var(--r) 0;
+        letter-spacing:.2px;
+    }
 
-    .card{background:var(--surface);border-radius:var(--r);
-          border:1px solid var(--border);box-shadow:var(--sh1);
-          padding:1.2rem 1.4rem;margin-bottom:1rem;transition:var(--tr);}
+    /* ── CARD ──────────────────────────────────────────────── */
+    .card{
+        background:var(--surface);
+        border-radius:var(--r-lg);
+        border:1px solid var(--border);
+        box-shadow:var(--sh1);
+        padding:1.3rem 1.5rem;
+        margin-bottom:1rem;
+        transition:var(--tr);
+    }
     .card:hover{box-shadow:var(--sh2);border-color:var(--blue-b);}
+    .card-accent{border-top:3px solid var(--blue-l);}
 
-    .uzone{background:var(--blue-bg);border:2px dashed #93C5FD;
-           border-radius:var(--r);padding:.85rem 1rem;text-align:center;
-           margin-bottom:.5rem;transition:var(--tr);}
-    .uzone:hover{border-color:var(--blue-l);background:#DBEAFE;}
-    .uzone-icon{font-size:1.5rem;line-height:1;}
-    .uzone-title{font-weight:700;color:var(--blue);font-size:.88rem;margin-top:.2rem;}
-    .uzone-sub{font-size:.75rem;color:var(--muted);margin-top:.1rem;}
+    /* ── UPLOAD ZONE ───────────────────────────────────────── */
+    .uzone{
+        background:linear-gradient(135deg,var(--blue-bg),#DBEAFE88);
+        border:2px dashed #93C5FD;
+        border-radius:var(--r-lg);padding:1.1rem 1rem;
+        text-align:center;margin-bottom:.5rem;
+        transition:var(--tr);cursor:pointer;
+    }
+    .uzone:hover{border-color:var(--blue-l);background:linear-gradient(135deg,#DBEAFE,#EFF6FF);}
+    .uzone-icon{font-size:1.7rem;line-height:1;margin-bottom:.3rem;}
+    .uzone-title{font-weight:700;color:var(--blue);font-size:.9rem;margin-top:.2rem;}
+    .uzone-sub{font-size:.75rem;color:var(--muted);margin-top:.15rem;}
 
-    .sbox{padding:.65rem 1rem;border-radius:var(--r);
-          font-size:.88rem;font-weight:500;margin:.4rem 0;}
-    .sbox-ok{background:var(--green-bg);color:#065F46;border-left:3px solid var(--green);}
-    .sbox-warn{background:var(--amber-bg);color:#78350F;border-left:3px solid var(--amber);}
+    /* ── STATUS BOXES ──────────────────────────────────────── */
+    .sbox{
+        padding:.7rem 1.1rem;border-radius:var(--r);
+        font-size:.88rem;font-weight:500;margin:.4rem 0;
+        display:flex;align-items:center;gap:.5rem;
+    }
+    .sbox-ok{
+        background:var(--green-bg);color:#065F46;
+        border:1px solid #A7F3D0;border-left:3px solid var(--green);
+    }
+    .sbox-warn{
+        background:var(--amber-bg);color:#78350F;
+        border:1px solid #FDE68A;border-left:3px solid var(--amber);
+    }
+    .sbox-err{
+        background:var(--red-bg);color:#991B1B;
+        border:1px solid #FECACA;border-left:3px solid var(--red);
+    }
 
-    .lbadge{display:inline-flex;align-items:center;gap:.35rem;
-            background:var(--blue-m);color:#fff;border-radius:var(--r);
-            padding:.3rem .8rem;font-size:.8rem;font-weight:700;margin-top:.45rem;}
+    /* ── LABEL BADGE ───────────────────────────────────────── */
+    .lbadge{
+        display:inline-flex;align-items:center;gap:.35rem;
+        background:var(--blue-m);color:#fff;
+        border-radius:var(--r);padding:.3rem .85rem;
+        font-size:.78rem;font-weight:700;
+        margin-top:.5rem;box-shadow:var(--sh-blue);
+        letter-spacing:.2px;
+    }
     .lbadge.amber{background:var(--amber);}
+    .lbadge.green{background:var(--green-l);}
 
-    .empty{text-align:center;padding:2.8rem 1rem;color:var(--muted);}
-    .empty-icon{font-size:2.8rem;margin-bottom:.5rem;opacity:.55;}
-    .empty-title{font-size:1rem;font-weight:700;color:#94A3B8;margin-bottom:.25rem;}
+    /* ── PILL ──────────────────────────────────────────────── */
+    .ipill{
+        display:inline-flex;align-items:center;gap:.35rem;
+        background:var(--blue-bg);border:1px solid var(--blue-b);
+        color:var(--blue);border-radius:20px;
+        padding:.22rem .8rem;font-size:.78rem;font-weight:600;
+        margin-bottom:.5rem;
+    }
+
+    /* ── FIELD LABEL ───────────────────────────────────────── */
+    .flabel{
+        font-size:.76rem;font-weight:600;color:var(--muted);
+        text-transform:uppercase;letter-spacing:.6px;margin-bottom:.3rem;
+    }
+
+    /* ── EMPTY STATE ───────────────────────────────────────── */
+    .empty{
+        text-align:center;padding:3.5rem 1.5rem;
+        color:var(--muted);border:2px dashed var(--border);
+        border-radius:var(--r-xl);background:var(--surface2);
+    }
+    .empty-icon{font-size:3rem;margin-bottom:.6rem;opacity:.5;}
+    .empty-title{font-size:1rem;font-weight:700;color:var(--muted2);margin-bottom:.3rem;}
     .empty-sub{font-size:.82rem;color:#CBD5E1;}
 
-    .ipill{display:inline-flex;align-items:center;gap:.35rem;
-           background:var(--blue-bg);border:1px solid var(--blue-b);
-           color:var(--blue);border-radius:20px;padding:.22rem .8rem;
-           font-size:.78rem;font-weight:600;margin-bottom:.5rem;}
-
-    .flabel{font-size:.78rem;font-weight:600;color:var(--muted);
-            text-transform:uppercase;letter-spacing:.5px;margin-bottom:.2rem;}
-
+    /* ── TABS ──────────────────────────────────────────────── */
     .stTabs [data-baseweb="tab-list"]{
-        gap:3px;background:var(--bg);border-radius:var(--r);
-        padding:4px;border:1px solid var(--border);}
+        gap:3px;background:var(--bg);
+        border-radius:var(--r-lg);
+        padding:5px;border:1px solid var(--border);
+    }
     .stTabs [data-baseweb="tab"]{
-        border-radius:6px;font-weight:600;font-size:.86rem;
-        padding:.4rem .95rem;transition:var(--tr);color:var(--muted);}
-    .stTabs [data-baseweb="tab"]:hover{color:var(--blue-m);background:rgba(59,130,246,.08);}
+        border-radius:8px;font-weight:600;font-size:.85rem;
+        padding:.42rem 1rem;transition:var(--tr);color:var(--muted);
+        border:none;
+    }
+    .stTabs [data-baseweb="tab"]:hover{
+        color:var(--blue-m);background:rgba(59,130,246,.08);
+    }
     .stTabs [aria-selected="true"]{
-        background:var(--surface)!important;color:var(--blue)!important;
-        box-shadow:var(--sh1)!important;}
+        background:var(--surface)!important;
+        color:var(--blue)!important;
+        box-shadow:var(--sh1)!important;
+    }
 
-    .stButton>button{width:100%;border-radius:var(--r);font-weight:600;
-                     font-size:.86rem;letter-spacing:.1px;transition:var(--tr);}
-    .stButton>button:hover{transform:translateY(-1px);box-shadow:var(--sh2);}
-    .stButton>button:active{transform:translateY(0);box-shadow:var(--sh0);}
+    /* ── BUTTONS ───────────────────────────────────────────── */
+    .stButton>button{
+        border-radius:var(--r)!important;font-weight:600!important;
+        font-size:.86rem!important;letter-spacing:.1px;
+        transition:var(--tr)!important;
+    }
+    .stButton>button:hover{
+        transform:translateY(-1px)!important;
+        box-shadow:var(--sh2)!important;
+    }
+    .stButton>button:active{
+        transform:translateY(0)!important;
+        box-shadow:var(--sh0)!important;
+    }
+    .stButton>button[kind="primary"]{
+        background:linear-gradient(135deg,var(--blue-m),var(--blue))!important;
+        box-shadow:var(--sh-blue)!important;border:none!important;
+    }
+    .stButton>button[kind="primary"]:hover{
+        background:linear-gradient(135deg,#1D4ED8,var(--blue))!important;
+    }
 
-    div[data-testid="stRadio"]>div{gap:.45rem;}
+    /* ── RADIO ─────────────────────────────────────────────── */
+    div[data-testid="stRadio"]>div{gap:.5rem;}
     div[data-testid="stRadio"] label{
-        background:var(--surface);border:1.5px solid var(--border);
-        border-radius:var(--r);padding:.5rem .9rem;cursor:pointer;
-        transition:var(--tr);font-weight:500;font-size:.86rem;}
-    div[data-testid="stRadio"] label:hover{border-color:var(--blue-l);background:var(--blue-bg);}
+        background:var(--surface);
+        border:1.5px solid var(--border);
+        border-radius:var(--r);padding:.55rem 1rem;
+        cursor:pointer;transition:var(--tr);
+        font-weight:500;font-size:.86rem;
+    }
+    div[data-testid="stRadio"] label:hover{
+        border-color:var(--blue-l);
+        background:var(--blue-bg);
+    }
 
-    .streamlit-expanderHeader{font-weight:600;font-size:.88rem;color:var(--blue);
-                               background:var(--bg);border-radius:6px;padding:.45rem .75rem!important;}
+    /* ── EXPANDER ──────────────────────────────────────────── */
+    .streamlit-expanderHeader{
+        font-weight:600;font-size:.88rem;color:var(--blue);
+        background:var(--surface2);border-radius:8px;
+        padding:.48rem .8rem!important;
+    }
+    [data-testid="stExpander"]{
+        border:1px solid var(--border)!important;
+        border-radius:var(--r)!important;
+    }
 
+    /* ── METRICS ───────────────────────────────────────────── */
     [data-testid="metric-container"]{
-        background:var(--surface);border:1px solid var(--border);
-        border-radius:var(--r);padding:.7rem .9rem;box-shadow:var(--sh0);transition:var(--tr);}
-    [data-testid="metric-container"]:hover{box-shadow:var(--sh1);border-color:var(--blue-b);}
-    [data-testid="stMetricValue"]{font-size:1.2rem!important;font-weight:700!important;color:var(--blue)!important;}
-    [data-testid="stMetricLabel"]{font-size:.74rem!important;font-weight:600!important;
-                                  color:var(--muted)!important;text-transform:uppercase;letter-spacing:.45px;}
+        background:var(--surface);
+        border:1px solid var(--border);
+        border-radius:var(--r-lg);
+        padding:.8rem 1rem;
+        box-shadow:var(--sh0);
+        transition:var(--tr);
+        position:relative;overflow:hidden;
+    }
+    [data-testid="metric-container"]::after{
+        content:'';position:absolute;top:0;left:0;right:0;height:3px;
+        background:linear-gradient(90deg,var(--blue-l),var(--blue-m));
+        border-radius:var(--r) var(--r) 0 0;
+    }
+    [data-testid="metric-container"]:hover{
+        box-shadow:var(--sh1);border-color:var(--blue-b);
+    }
+    [data-testid="stMetricValue"]{
+        font-size:1.25rem!important;font-weight:700!important;
+        color:var(--blue)!important;font-family:'Inter',sans-serif!important;
+    }
+    [data-testid="stMetricLabel"]{
+        font-size:.72rem!important;font-weight:600!important;
+        color:var(--muted)!important;text-transform:uppercase;
+        letter-spacing:.5px;
+    }
 
+    /* ── INPUTS ────────────────────────────────────────────── */
     .stTextInput input,.stNumberInput input{
-        border-radius:var(--r)!important;border:1.5px solid var(--border)!important;
-        font-size:.86rem!important;transition:var(--tr);}
+        border-radius:var(--r)!important;
+        border:1.5px solid var(--border)!important;
+        font-size:.86rem!important;transition:var(--tr);
+        background:var(--surface)!important;
+    }
     .stTextInput input:focus,.stNumberInput input:focus{
-        border-color:var(--blue-l)!important;box-shadow:var(--glow)!important;}
+        border-color:var(--blue-l)!important;
+        box-shadow:var(--glow)!important;
+    }
+    .stPasswordInput input{
+        border-radius:var(--r)!important;
+        border:1.5px solid var(--border)!important;
+        font-size:.86rem!important;transition:var(--tr);
+    }
+    .stPasswordInput input:focus{
+        border-color:var(--blue-l)!important;
+        box-shadow:var(--glow)!important;
+    }
 
+    /* ── DATA TABLES ───────────────────────────────────────── */
     [data-testid="stDataFrame"],[data-testid="stDataEditor"]{
-        border-radius:var(--r);border:1px solid var(--border)!important;overflow:hidden;}
+        border-radius:var(--r-lg)!important;
+        border:1px solid var(--border)!important;
+        overflow:hidden;
+        box-shadow:var(--sh1)!important;
+    }
 
-    hr{border:none;border-top:1px solid var(--border);margin:.9rem 0;}
+    /* ── DIVIDER ───────────────────────────────────────────── */
+    hr{border:none;border-top:1px solid var(--border);margin:1rem 0;}
 
+    /* ── MASTERSAF COMPONENTS ──────────────────────────────── */
+    .ms-log-area{
+        background:#080D18;
+        border:1px solid rgba(59,130,246,.15);
+        border-radius:var(--r-lg);
+        padding:1.1rem 1.2rem;
+        font-family:'JetBrains Mono',monospace;
+        font-size:.75rem;color:#CBD5E1;
+        max-height:420px;overflow-y:auto;
+        white-space:pre-wrap;line-height:1.6;
+        box-shadow:inset 0 2px 8px rgba(0,0,0,.3);
+    }
+    .ms-log-area .log-ts{color:#334155;}
+    .ms-log-area .log-ok{color:#22D3EE;}
+    .ms-log-area .log-warn{color:#F59E0B;}
+    .ms-log-area .log-err{color:#F87171;}
+    .ms-log-area .log-info{color:#60A5FA;}
+
+    .ms-stat-grid{
+        display:grid;
+        grid-template-columns:repeat(4,1fr);
+        gap:1rem;margin:1rem 0;
+    }
+    .ms-stat-card{
+        background:var(--surface);
+        border:1px solid var(--border);
+        border-radius:var(--r-lg);
+        padding:1.2rem 1.4rem;
+        position:relative;overflow:hidden;
+        transition:var(--tr);
+        box-shadow:var(--sh0);
+    }
+    .ms-stat-card::before{
+        content:'';position:absolute;
+        top:0;left:0;right:0;height:3px;
+        background:linear-gradient(90deg,var(--blue-l),var(--green-l));
+    }
+    .ms-stat-card:hover{
+        box-shadow:var(--sh2);
+        transform:translateY(-2px);
+    }
+    .ms-stat-label{
+        font-size:.68rem;font-weight:700;color:var(--muted);
+        text-transform:uppercase;letter-spacing:.12em;margin-bottom:.55rem;
+    }
+    .ms-stat-value{
+        font-family:'JetBrains Mono',monospace;
+        font-size:1.6rem;font-weight:600;
+        color:var(--green-l);line-height:1;
+    }
+    .ms-stat-sub{font-size:.72rem;color:var(--muted2);margin-top:.35rem;}
+
+    /* ── PROGRESS / ANIMATIONS ─────────────────────────────── */
     @keyframes spin{to{transform:rotate(360deg)}}
     .spinner{animation:spin 1.2s linear infinite;display:inline-block;}
-    @keyframes fadeUp{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
-    .fade-up{animation:fadeUp .28s ease forwards;}
 
-    /* ── MasterSAF specific ── */
-    .ms-log-area {
-        background: #0d1117;
-        border: 1px solid rgba(255,255,255,0.08);
-        border-radius: 12px;
-        padding: 1rem;
-        font-family: 'JetBrains Mono', monospace;
-        font-size: 0.75rem;
-        color: #e2e8f0;
-        max-height: 400px;
-        overflow-y: auto;
-        white-space: pre-wrap;
-        line-height: 1.5;
+    @keyframes fadeUp{
+        from{opacity:0;transform:translateY(10px)}
+        to{opacity:1;transform:translateY(0)}
     }
-    .ms-log-area .log-ts { color: #475569; }
-    .ms-log-area .log-ok { color: #22d3a5; }
-    .ms-log-area .log-warn { color: #f59e0b; }
-    .ms-log-area .log-err { color: #ef4444; }
-    .ms-log-area .log-info { color: #3b82f6; }
-    .ms-stat-grid {
-        display: grid;
-        grid-template-columns: repeat(4, 1fr);
-        gap: 1rem;
-        margin: 1rem 0;
+    .fade-up{animation:fadeUp .3s ease forwards;}
+
+    @keyframes pulse-glow{
+        0%,100%{box-shadow:0 0 0 0 rgba(59,130,246,.4)}
+        50%{box-shadow:0 0 0 8px rgba(59,130,246,.0)}
     }
-    .ms-stat-card {
-        background: var(--surface);
-        border: 1px solid var(--border);
-        border-radius: 14px;
-        padding: 1.2rem 1.4rem;
+    .pulse{animation:pulse-glow 2s ease-in-out infinite;}
+
+    @keyframes shimmer{
+        0%{background-position:-200% 0}
+        100%{background-position:200% 0}
     }
-    .ms-stat-label {
-        font-size: 0.68rem;
-        font-weight: 600;
-        color: var(--muted);
-        text-transform: uppercase;
-        letter-spacing: 0.12em;
-        margin-bottom: 0.5rem;
-    }
-    .ms-stat-value {
-        font-family: 'JetBrains Mono', monospace;
-        font-size: 1.5rem;
-        font-weight: 600;
-        color: var(--green);
-        line-height: 1;
-    }
-    .ms-stat-sub {
-        font-size: 0.72rem;
-        color: var(--muted);
-        margin-top: 0.3rem;
+    .skeleton{
+        background:linear-gradient(90deg,var(--border) 25%,var(--surface2) 50%,var(--border) 75%);
+        background-size:200% 100%;animation:shimmer 1.4s ease infinite;
+        border-radius:var(--r);height:1rem;
     }
 
-    @media(max-width:900px){
-        .hero{padding:1.8rem 1.4rem 1.5rem;}
-        .hero-title{font-size:1.55rem;}
+    /* ── RESPONSIVE ────────────────────────────────────────── */
+    @media(max-width:1024px){
+        .ms-stat-grid{grid-template-columns:repeat(2,1fr);}
+        .hero{padding:2rem 2rem 1.8rem;}
+        .hero-title{font-size:1.8rem;}
+    }
+    @media(max-width:768px){
+        .hero{padding:1.6rem 1.2rem 1.4rem;border-radius:var(--r-xl);}
+        .hero-title{font-size:1.45rem;letter-spacing:-.4px;}
         .hero-logo{max-width:140px;}
-        .ms-stat-grid { grid-template-columns: repeat(2, 1fr); }
-    }
-    @media(max-width:600px){
-        .hero-title{font-size:1.3rem;}
-        .hero{padding:1.3rem 1rem 1.1rem;border-radius:var(--r-lg);}
-        .stTabs [data-baseweb="tab"]{padding:.32rem .55rem;font-size:.78rem;}
+        .hero-sub{font-size:.85rem;}
+        .ms-stat-grid{grid-template-columns:1fr 1fr;}
+        .stTabs [data-baseweb="tab"]{padding:.35rem .6rem;font-size:.78rem;}
         .chip{font-size:.68rem;padding:.15rem .55rem;}
+        .ph-title{font-size:1.1rem;}
+        .block-container{padding-left:.75rem!important;padding-right:.75rem!important;}
+    }
+    @media(max-width:480px){
+        .hero-title{font-size:1.2rem;}
+        .hero{padding:1.2rem .9rem 1rem;border-radius:var(--r-lg);}
+        .ms-stat-grid{grid-template-columns:1fr;}
+        .hero-sub{display:none;}
     }
     </style>""")
 
@@ -428,7 +695,7 @@ def processador_txt():
 
     if arquivo is not None:
         st.markdown("")
-        if st.button("🔄 Processar Arquivo TXT", type="primary", use_container_width=True):
+        if st.button("🔄 Processar Arquivo TXT", type="primary", **_WS):
             try:
                 show_loading_animation("Analisando arquivo...")
                 conteudo = arquivo.read()
@@ -448,9 +715,11 @@ def processador_txt():
                     buf = BytesIO()
                     buf.write(resultado.encode('utf-8'))
                     buf.seek(0)
-                    st.download_button("⬇️ Baixar arquivo processado", data=buf,
-                                       file_name=f"processado_{arquivo.name}",
-                                       mime="text/plain", use_container_width=True)
+                    st.download_button(
+                        "⬇️ Baixar arquivo processado", data=buf,
+                        file_name=f"processado_{arquivo.name}",
+                        mime="text/plain", **_WS,
+                    )
             except Exception as e:
                 st.error(f"Erro: {str(e)}")
     else:
@@ -459,13 +728,11 @@ def processador_txt():
 
 
 # ==============================================================================
-# PARTE 2 — MASTERSAF AUTOMAÇÃO XML (SUBSTITUI O PROCESSADOR CT-E)
+# PARTE 2 — MASTERSAF AUTOMAÇÃO XML
 # ==============================================================================
-
-# ── NAMESPACES CT-e ─────────────────────────────────────────────────
 CTE_NAMESPACES = {'cte': 'http://www.portalfiscal.inf.br/cte'}
 
-# ── CTeProcessor (mantido internamente para processar os XMLs baixados) ──
+
 class CTeProcessor:
     def __init__(self):
         self.processed_data = []
@@ -669,29 +936,17 @@ class CTeProcessor:
 
 # ── FUNÇÕES DO WEBDRIVER ──────────────────────────────────────────
 def get_chrome_version():
-    """Detecta a versão do Chrome/Chromium instalada"""
-    try:
-        result = subprocess.run(['chromium', '--version'], capture_output=True, text=True)
-        if result.returncode == 0:
-            return result.stdout.strip()
-    except:
-        pass
-    try:
-        result = subprocess.run(['google-chrome', '--version'], capture_output=True, text=True)
-        if result.returncode == 0:
-            return result.stdout.strip()
-    except:
-        pass
-    try:
-        result = subprocess.run(['google-chrome-stable', '--version'], capture_output=True, text=True)
-        if result.returncode == 0:
-            return result.stdout.strip()
-    except:
-        pass
+    for cmd in (['chromium', '--version'], ['google-chrome', '--version'],
+                ['google-chrome-stable', '--version']):
+        try:
+            result = subprocess.run(cmd, capture_output=True, text=True)
+            if result.returncode == 0:
+                return result.stdout.strip()
+        except Exception:
+            pass
     return None
 
 def get_driver(download_path):
-    """Cria e retorna uma instância do WebDriver configurada corretamente"""
     opts = Options()
     opts.add_argument("--headless=new")
     opts.add_argument("--window-size=1920,1080")
@@ -706,7 +961,6 @@ def get_driver(download_path):
     opts.add_argument("--disable-blink-features=AutomationControlled")
     opts.add_experimental_option("excludeSwitches", ["enable-automation"])
     opts.add_experimental_option('useAutomationExtension', False)
-
     prefs = {
         "download.default_directory": download_path,
         "download.prompt_for_download": False,
@@ -714,31 +968,36 @@ def get_driver(download_path):
         "safebrowsing.enabled": True,
         "profile.default_content_setting_values.automatic_downloads": 1,
         "credentials_enable_service": False,
-        "profile.password_manager_enabled": False
+        "profile.password_manager_enabled": False,
     }
     opts.add_experimental_option("prefs", prefs)
-
-    try:
-        from webdriver_manager.chrome import ChromeDriverManager
-        service = Service(ChromeDriverManager().install())
-        driver = webdriver.Chrome(service=service, options=opts)
-        return driver
-    except Exception:
+    for strategy in [
+        lambda: _try_webdriver_manager(opts),
+        lambda: _try_fixed_path(opts, '/usr/bin/chromedriver'),
+        lambda: _try_default(opts),
+        lambda: _try_chromium_binary(opts),
+    ]:
         try:
-            service = Service('/usr/bin/chromedriver')
-            driver = webdriver.Chrome(service=service, options=opts)
-            return driver
+            return strategy()
         except Exception:
-            try:
-                driver = webdriver.Chrome(options=opts)
-                return driver
-            except Exception:
-                opts.binary_location = "/usr/bin/chromium"
-                driver = webdriver.Chrome(options=opts)
-                return driver
+            continue
+    raise RuntimeError("Nenhuma estratégia de ChromeDriver funcionou.")
+
+def _try_webdriver_manager(opts):
+    from webdriver_manager.chrome import ChromeDriverManager
+    return webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=opts)
+
+def _try_fixed_path(opts, path):
+    return webdriver.Chrome(service=Service(path), options=opts)
+
+def _try_default(opts):
+    return webdriver.Chrome(options=opts)
+
+def _try_chromium_binary(opts):
+    opts.binary_location = "/usr/bin/chromium"
+    return webdriver.Chrome(options=opts)
 
 def esperar_downloads(directory, timeout=120):
-    """Aguarda até que todos os downloads sejam concluídos"""
     start = time.time()
     while time.time() - start < timeout:
         if not list(Path(directory).glob('*.crdownload')):
@@ -747,21 +1006,18 @@ def esperar_downloads(directory, timeout=120):
     return False
 
 def add_ms_log(msg, level='info'):
-    """Adiciona mensagem ao log da sessão do MasterSAF"""
     ts = datetime.now().strftime("%H:%M:%S")
-    st.session_state.ms_logs.append({
-        'ts': ts,
-        'msg': msg,
-        'level': level
-    })
+    st.session_state.ms_logs.append({'ts': ts, 'msg': msg, 'level': level})
 
 def render_ms_log():
-    """Renderiza o log formatado do MasterSAF"""
     logs = st.session_state.ms_logs[-40:]
     html_parts = ['<div class="ms-log-area">']
     for entry in logs:
         cls = f"log-{entry['level']}"
-        html_parts.append(f'<span class="log-ts">[{entry["ts"]}]</span> <span class="{cls}">{entry["msg"]}</span>')
+        html_parts.append(
+            f'<span class="log-ts">[{entry["ts"]}]</span>'
+            f' <span class="{cls}">{entry["msg"]}</span>\n'
+        )
     html_parts.append('</div>')
     ph('\n'.join(html_parts))
 
@@ -771,7 +1027,6 @@ def mastersaf_automacao():
     page_header("⚡", "MasterSAF — Automação XML",
                 "Download e processamento em massa de CT-es direto do portal")
 
-    # ── Sub-tabs ───────────────────────────────────────────────
     tab_exec, tab_resultados, tab_export = st.tabs([
         "🚀  Executar Automação",
         "📊  Resultados & Análise",
@@ -783,18 +1038,17 @@ def mastersaf_automacao():
     # ════════════════════════════════════════════════════════════
     with tab_exec:
         section_title("⚙️ Configuração da Automação")
-
         col_a, col_b = st.columns(2, gap="large")
 
         with col_a:
             with st.container():
-                ph('<div class="card"><div class="flabel">🔑 Credenciais de Acesso</div>')
+                ph('<div class="card card-accent"><div class="flabel">🔑 Credenciais de Acesso</div>')
                 usuario = st.text_input("Usuário", placeholder="login@empresa.com.br", key="ms_usuario")
                 senha   = st.text_input("Senha",   type="password", placeholder="••••••••", key="ms_senha")
                 ph('</div>')
 
             with st.container():
-                ph('<div class="card" style="margin-top:1.5rem"><div class="flabel">📅 Período de Busca</div>')
+                ph('<div class="card" style="margin-top:1.2rem"><div class="flabel">📅 Período de Busca</div>')
                 p1, p2 = st.columns(2)
                 with p1:
                     data_ini = st.text_input("Data Inicial", value="08/05/2026", key="ms_dt_ini")
@@ -804,26 +1058,26 @@ def mastersaf_automacao():
 
         with col_b:
             with st.container():
-                ph('<div class="card"><div class="flabel">⚙️ Parâmetros de Execução</div>')
+                ph('<div class="card card-accent"><div class="flabel">⚙️ Parâmetros de Execução</div>')
                 qtd_loops = st.number_input(
                     "Quantidade de Páginas (Loops)",
                     min_value=1, max_value=1000, value=5,
                     help="Cada loop processa uma página de até 200 CT-es.",
-                    key="ms_qtd_loops"
+                    key="ms_qtd_loops",
                 )
                 gerar_excel = st.checkbox("Gerar Excel consolidado dos CT-es", value=True, key="ms_gerar_excel")
                 gerar_zip   = st.checkbox("Disponibilizar ZIP com XMLs brutos", value=True, key="ms_gerar_zip")
                 ph('</div>')
 
             with st.container():
-                ph('<div class="card" style="margin-top:1.5rem"><div class="flabel">🚀 Executar</div>')
-                ph("""
+                ph("""<div class="card" style="margin-top:1.2rem">
+                <div class="flabel">🚀 Executar</div>
                 <p style="font-size:0.82rem;color:var(--muted);margin-bottom:1rem;line-height:1.6;">
-                    O navegador será executado em <strong style="color:var(--blue-m)">modo headless</strong> (invisível).
-                    Você pode acompanhar o progresso abaixo em tempo real.
-                </p>
-                """)
-                iniciar = st.button("⚡  Iniciar Automação", key="ms_btn_iniciar", type="primary")
+                    O navegador será executado em <strong style="color:var(--blue-m)">modo headless</strong>.
+                    Acompanhe o progresso em tempo real abaixo.
+                </p>""")
+                iniciar = st.button("⚡  Iniciar Automação", key="ms_btn_iniciar",
+                                    type="primary", **_WS)
                 ph('</div>')
 
         # ── Execução ──────────────────────────────────────────
@@ -831,7 +1085,6 @@ def mastersaf_automacao():
             if not usuario or not senha:
                 st.error("⚠️ Preencha o usuário e a senha para continuar.")
             else:
-                # Limpa logs e dados anteriores
                 st.session_state.ms_logs = []
                 st.session_state.ms_processed_data = []
 
@@ -847,6 +1100,12 @@ def mastersaf_automacao():
                 driver = None
                 processor = CTeProcessor()
 
+                def _refresh_log():
+                    log_placeholder.markdown(
+                        '\n'.join([f"[{e['ts']}] {e['msg']}"
+                                   for e in st.session_state.ms_logs[-15:]]),
+                    )
+
                 try:
                     chrome_version = get_chrome_version()
                     if chrome_version:
@@ -854,9 +1113,7 @@ def mastersaf_automacao():
 
                     add_ms_log("🌐 Iniciando Chrome em modo headless...", 'info')
                     driver = get_driver(dl_path)
-                    log_placeholder.markdown(
-                        '\n'.join([f"[{e['ts']}] {e['msg']}" for e in st.session_state.ms_logs[-15:]]),
-                    )
+                    _refresh_log()
 
                     status_box.info("🔑 Autenticando no MasterSAF...")
                     add_ms_log("🔗 Acessando https://p.dfe.mastersaf.com.br/mvc/login", 'info')
@@ -870,9 +1127,7 @@ def mastersaf_automacao():
                     time.sleep(5)
                     add_ms_log("✅ Login realizado com sucesso", 'ok')
                     progress_bar.progress(0.05)
-                    log_placeholder.markdown(
-                        '\n'.join([f"[{e['ts']}] {e['msg']}" for e in st.session_state.ms_logs[-15:]]),
-                    )
+                    _refresh_log()
 
                     status_box.info("📋 Navegando até Listagem de CT-es...")
                     driver.execute_script("arguments[0].click();",
@@ -880,9 +1135,7 @@ def mastersaf_automacao():
                     time.sleep(5)
                     add_ms_log("📋 Módulo Listagem Receptor CT-es acessado", 'info')
                     progress_bar.progress(0.08)
-                    log_placeholder.markdown(
-                        '\n'.join([f"[{e['ts']}] {e['msg']}" for e in st.session_state.ms_logs[-15:]]),
-                    )
+                    _refresh_log()
 
                     add_ms_log(f"📅 Definindo período: {data_ini} → {data_fin}", 'info')
                     for xpath, val in [
@@ -901,9 +1154,7 @@ def mastersaf_automacao():
                         driver.find_element(By.XPATH, '//*[@id="listagem_atualiza"]'))
                     time.sleep(5)
                     progress_bar.progress(0.12)
-                    log_placeholder.markdown(
-                        '\n'.join([f"[{e['ts']}] {e['msg']}" for e in st.session_state.ms_logs[-15:]]),
-                    )
+                    _refresh_log()
 
                     add_ms_log("⚙️ Configurando 200 itens por página...", 'info')
                     sel = driver.find_element(
@@ -913,20 +1164,14 @@ def mastersaf_automacao():
                     sel.find_element(By.XPATH, './/option[@value="200"]').click()
                     time.sleep(3)
                     progress_bar.progress(0.15)
-                    log_placeholder.markdown(
-                        '\n'.join([f"[{e['ts']}] {e['msg']}" for e in st.session_state.ms_logs[-15:]]),
-                    )
+                    _refresh_log()
 
                     add_ms_log(f"📥 Loop de download iniciado — {int(qtd_loops)} página(s)", 'info')
-                    log_placeholder.markdown(
-                        '\n'.join([f"[{e['ts']}] {e['msg']}" for e in st.session_state.ms_logs[-15:]]),
-                    )
+                    _refresh_log()
 
                     for i in range(int(qtd_loops)):
                         add_ms_log(f"━━ Página {i + 1} / {int(qtd_loops)}", 'info')
-                        log_placeholder.markdown(
-                            '\n'.join([f"[{e['ts']}] {e['msg']}" for e in st.session_state.ms_logs[-15:]]),
-                        )
+                        _refresh_log()
 
                         try:
                             cb = driver.find_element(
@@ -947,9 +1192,7 @@ def mastersaf_automacao():
                             add_ms_log("   ⚠  Botão de download em massa não encontrado", 'warn')
 
                         add_ms_log("   ⏳ Aguardando download finalizar...", 'info')
-                        log_placeholder.markdown(
-                            '\n'.join([f"[{e['ts']}] {e['msg']}" for e in st.session_state.ms_logs[-15:]]),
-                        )
+                        _refresh_log()
                         esperar_downloads(dl_path, timeout=120)
                         time.sleep(2)
 
@@ -980,30 +1223,21 @@ def mastersaf_automacao():
                     driver.quit()
                     driver = None
                     progress_bar.progress(0.78)
-                    log_placeholder.markdown(
-                        '\n'.join([f"[{e['ts']}] {e['msg']}" for e in st.session_state.ms_logs[-15:]]),
-                    )
+                    _refresh_log()
 
-                    # ── Processamento ──────────────────────
                     zip_found = list(Path(dl_path).glob('*.zip'))
                     add_ms_log(f"🔍 {len(zip_found)} arquivo(s) ZIP localizado(s)", 'info')
-                    log_placeholder.markdown(
-                        '\n'.join([f"[{e['ts']}] {e['msg']}" for e in st.session_state.ms_logs[-15:]]),
-                    )
+                    _refresh_log()
 
                     if gerar_excel and zip_found:
                         status_box.info("📊 Processando XMLs e montando Excel...")
                         processor.process_directory(dl_path, add_ms_log)
                         add_ms_log(f"📊 CT-es identificados: {len(processor.processed_data)}", 'ok')
                     progress_bar.progress(0.92)
-                    log_placeholder.markdown(
-                        '\n'.join([f"[{e['ts']}] {e['msg']}" for e in st.session_state.ms_logs[-15:]]),
-                    )
+                    _refresh_log()
 
-                    # Salva dados processados na sessão
                     st.session_state.ms_processed_data = processor.processed_data.copy()
 
-                    # ZIP de XMLs brutos
                     zip_buf = None
                     if gerar_zip:
                         add_ms_log("📦 Empacotando XMLs brutos...", 'info')
@@ -1018,13 +1252,10 @@ def mastersaf_automacao():
                     progress_bar.progress(1.0)
                     status_box.success("✅ Automação concluída com sucesso!")
                     add_ms_log("🏁 Pipeline completo.", 'ok')
-                    log_placeholder.markdown(
-                        '\n'.join([f"[{e['ts']}] {e['msg']}" for e in st.session_state.ms_logs[-15:]]),
-                    )
+                    _refresh_log()
 
                     shutil.rmtree(dl_path, ignore_errors=True)
 
-                    # ── Stats ────────────────────────────
                     if processor.processed_data:
                         summ = processor.summary()
                         ph('<div style="margin-top:1.5rem;"></div>')
@@ -1057,9 +1288,7 @@ def mastersaf_automacao():
                 except Exception as e:
                     st.error(f"❌ Erro técnico: {str(e)[:300]}")
                     add_ms_log(f"❌ EXCEÇÃO: {str(e)[:300]}", 'err')
-                    log_placeholder.markdown(
-                        '\n'.join([f"[{e['ts']}] {e['msg']}" for e in st.session_state.ms_logs[-15:]]),
-                    )
+                    _refresh_log()
                     if driver:
                         try:
                             driver.quit()
@@ -1086,12 +1315,15 @@ def mastersaf_automacao():
 
             pmin = float(df['Peso Bruto (kg)'].min())
             pmax = float(df['Peso Bruto (kg)'].max())
-            pf = st.slider("Faixa de Peso (kg)", pmin, pmax, (pmin, pmax),
-                           format="%.1f kg", key="ms_peso_range") if pmin < pmax else (pmin, pmax)
+            pf = (
+                st.slider("Faixa de Peso (kg)", pmin, pmax, (pmin, pmax),
+                          format="%.1f kg", key="ms_peso_range")
+                if pmin < pmax else (pmin, pmax)
+            )
 
             fdf = df.copy()
-            if uf_f: fdf = fdf[fdf['UF Inicio'].isin(uf_f)]
-            if uf_d: fdf = fdf[fdf['UF Destino'].isin(uf_d)]
+            if uf_f:   fdf = fdf[fdf['UF Inicio'].isin(uf_f)]
+            if uf_d:   fdf = fdf[fdf['UF Destino'].isin(uf_d)]
             if emit_f: fdf = fdf[fdf['Emitente'].isin(emit_f)]
             fdf = fdf[(fdf['Peso Bruto (kg)'] >= pf[0]) & (fdf['Peso Bruto (kg)'] <= pf[1])]
 
@@ -1106,10 +1338,10 @@ def mastersaf_automacao():
             cols = ['Arquivo','nCT','Data Emissao','Emitente','Remetente',
                     'Destinatario','UF Inicio','UF Destino','Peso Bruto (kg)',
                     'Valor Prestacao']
-            st.dataframe(fdf[cols], use_container_width=True, height=300)
+            st.dataframe(fdf[cols], **_WS, height=300)
 
             with st.expander("📋 Todos os campos"):
-                st.dataframe(fdf, use_container_width=True)
+                st.dataframe(fdf, **_WS)
 
             section_title("📈 Análise Visual")
             g1, g2 = st.columns(2)
@@ -1119,7 +1351,7 @@ def mastersaf_automacao():
                                        title="Distribuição de Peso Bruto",
                                        color_discrete_sequence=['#3B82F6'])
                     fig.update_layout(margin=dict(t=38,b=8,l=8,r=8))
-                    st.plotly_chart(fig, use_container_width=True)
+                    st.plotly_chart(fig, **_WS)
             with g2:
                 if not fdf.empty:
                     fig2 = px.scatter(fdf, x='Peso Bruto (kg)', y='Valor Prestacao',
@@ -1141,7 +1373,7 @@ def mastersaf_automacao():
                         pass
                     fig2.update_layout(margin=dict(t=38,b=8,l=8,r=8),
                                        legend=dict(orientation="h", y=-0.22))
-                    st.plotly_chart(fig2, use_container_width=True)
+                    st.plotly_chart(fig2, **_WS)
         else:
             empty_state("📊", "Nenhum CT-e processado ainda",
                         "Execute a automação na aba 'Executar Automação' para ver os resultados")
@@ -1168,36 +1400,39 @@ def mastersaf_automacao():
                 with pd.ExcelWriter(out, engine='xlsxwriter') as w:
                     df_exp.to_excel(w, sheet_name='Dados_CTe', index=False)
                 out.seek(0)
-                st.download_button("📥 Baixar Excel", data=out,
-                                   file_name="dados_cte_mastersaf.xlsx",
-                                   mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                                   use_container_width=True)
+                st.download_button(
+                    "📥 Baixar Excel", data=out,
+                    file_name="dados_cte_mastersaf.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    **_WS,
+                )
             else:
                 csv = df_exp.to_csv(index=False).encode('utf-8')
-                st.download_button("📥 Baixar CSV", data=csv,
-                                   file_name="dados_cte_mastersaf.csv", mime="text/csv",
-                                   use_container_width=True)
+                st.download_button(
+                    "📥 Baixar CSV", data=csv,
+                    file_name="dados_cte_mastersaf.csv", mime="text/csv",
+                    **_WS,
+                )
 
-            # ZIP de XMLs brutos
-            if hasattr(st.session_state, 'ms_zip_bytes') and st.session_state.ms_zip_bytes:
+            if st.session_state.get('ms_zip_bytes'):
                 st.divider()
                 st.download_button(
                     "📥  Download ZIP — XMLs brutos",
                     data=st.session_state.ms_zip_bytes,
                     file_name="XMLs_MasterSaf.zip",
                     mime="application/zip",
-                    use_container_width=True,
+                    **_WS,
                 )
 
             with st.expander("👁️ Prévia"):
-                st.dataframe(df_exp.head(10), use_container_width=True)
+                st.dataframe(df_exp.head(10), **_WS)
         else:
             empty_state("📥", "Nenhum dado disponível",
                         "Execute a automação na aba 'Executar Automação' primeiro")
 
 
 # ==============================================================================
-# PARTE 3 — PARSER EXTRATO DUIMP (layout antigo / HafelePDFParser)
+# PARTE 3 — PARSER EXTRATO DUIMP (HafelePDFParser)
 # ==============================================================================
 class HafelePDFParser:
     """
@@ -1214,7 +1449,8 @@ class HafelePDFParser:
     def _parse_valor(v: str) -> float:
         try:
             return float(v.strip().replace('.','').replace(',','.')) if v else 0.0
-        except: return 0.0
+        except Exception:
+            return 0.0
 
     def parse_pdf(self, pdf_path: str) -> Dict:
         try:
@@ -1238,7 +1474,8 @@ class HafelePDFParser:
                     chunk_lines = []
                     for page in pdf.pages[start:end]:
                         t = page.extract_text(layout=False)
-                        if t: chunk_lines.append(t)
+                        if t:
+                            chunk_lines.append(t)
 
                     chunk_text = self._buffer + "\n".join(chunk_lines)
                     is_last    = (end == total)
@@ -1284,7 +1521,8 @@ class HafelePDFParser:
             m = re.search(r'(\d+)', header)
             num = int(m.group(1)) if m else (i // 2)
             item = self._parse_item_block(num, content)
-            if item: items_found.append(item)
+            if item:
+                items_found.append(item)
 
         if not is_last and len(parts) >= 2:
             last_header  = parts[-2] if len(parts) % 2 == 0 else ""
@@ -1331,11 +1569,12 @@ class HafelePDFParser:
             if m: item['seguro_internacional'] = pv(m.group(1))
             m = re.search(r'Local Aduaneiro \(R\$\)\s*([\d\.,]+)', text)
             if m:
-                item['local_aduaneiro'] = pv(m.group(1))
-                item['aduaneiro_reais'] = item['local_aduaneiro']
+                item['local_aduaneiro']    = pv(m.group(1))
+                item['aduaneiro_reais']    = item['local_aduaneiro']
                 item['valorAduaneiroReal'] = item['local_aduaneiro']
             tax_pats = re.findall(
-                r'Base de Cálculo.*?\(R\$\)\s*([\d\.,]+).*?% Alíquota\s*([\d\.,]+).*?Valor.*?(?:Devido|A Recolher|Calculado).*?\(R\$\)\s*([\d\.,]+)',
+                r'Base de Cálculo.*?\(R\$\)\s*([\d\.,]+).*?% Alíquota\s*([\d\.,]+)'
+                r'.*?Valor.*?(?:Devido|A Recolher|Calculado).*?\(R\$\)\s*([\d\.,]+)',
                 text, re.DOTALL | re.IGNORECASE)
             for base_s, aliq_s, val_s in tax_pats:
                 base = pv(base_s); aliq = pv(aliq_s); val = pv(val_s)
@@ -1347,12 +1586,15 @@ class HafelePDFParser:
                     item['ii_aliquota']=aliq; item['ii_base_calculo']=base; item['ii_valor_devido']=val
                 elif aliq>=0 and item['ipi_aliquota']==0:
                     item['ipi_aliquota']=aliq; item['ipi_base_calculo']=base; item['ipi_valor_devido']=val
-            item['total_impostos']=(item['ii_valor_devido']+item['ipi_valor_devido']
-                                    +item['pis_valor_devido']+item['cofins_valor_devido'])
-            item['valor_total_com_impostos']=item['valor_total']+item['total_impostos']
+            item['total_impostos'] = (
+                item['ii_valor_devido'] + item['ipi_valor_devido']
+                + item['pis_valor_devido'] + item['cofins_valor_devido']
+            )
+            item['valor_total_com_impostos'] = item['valor_total'] + item['total_impostos']
             return item
         except Exception as e:
-            logger.error(f"Erro item {item_num}: {e}"); return None
+            logger.error(f"Erro item {item_num}: {e}")
+            return None
 
     def _calculate_totals(self):
         if self.documento['itens']:
@@ -1386,13 +1628,14 @@ class SigrawebPDFParser:
     def _parse_valor(v: str) -> float:
         try:
             return float(str(v).strip().replace('.','').replace(',','.')) if v else 0.0
-        except: return 0.0
+        except Exception:
+            return 0.0
 
     @staticmethod
     def _fmt_date(d: str) -> str:
         try:
             return datetime.strptime(d.strip(), '%d/%m/%Y').strftime('%Y%m%d')
-        except:
+        except Exception:
             return d.replace('/','').replace('-','')[:8]
 
     def parse_pdf(self, pdf_path: str) -> Dict:
@@ -1422,7 +1665,8 @@ class SigrawebPDFParser:
                     chunk_pages = []
                     for page in pdf.pages[start:end]:
                         t = page.extract_text(layout=False)
-                        if t: chunk_pages.append(t)
+                        if t:
+                            chunk_pages.append(t)
 
                     chunk_text = buffer + "\n".join(chunk_pages)
                     is_last    = (end == total)
@@ -1466,7 +1710,8 @@ class SigrawebPDFParser:
             num_str = parts[i].strip()
             content = parts[i+1] if (i+1) < len(parts) else ''
             item    = self._parse_item_block(num_str, content)
-            if item: items_found.append(item)
+            if item:
+                items_found.append(item)
 
         if not is_last and len(parts) >= 2:
             last_num     = parts[-2] if len(parts) % 2 == 0 else ""
@@ -1523,7 +1768,8 @@ class SigrawebPDFParser:
         h['valorAduaneiroUSD'] = _f(r'Valor Aduaneiro:\s*([\d\.,]+)\s*\(USD\)', combined)
         h['valorAduaneiroBRL'] = _f(r'Valor Aduaneiro:.*?;\s*([\d\.,]+)\s*\(BRL\)', combined)
         tm = re.search(
-            r'([\d\.,]+)\s+([\d\.,]+)\s+([\d\.,]+)\s+([\d\.,]+)\s+([\d\.,]+)\s+Itau\s+(\d+)\s+([\d\-]+)',
+            r'([\d\.,]+)\s+([\d\.,]+)\s+([\d\.,]+)\s+([\d\.,]+)\s+([\d\.,]+)'
+            r'\s+Itau\s+(\d+)\s+([\d\-]+)',
             p1)
         if tm:
             h['totalII']=tm.group(1); h['totalIPI']=tm.group(2)
@@ -1560,8 +1806,9 @@ class SigrawebPDFParser:
             }
             m = re.search(r'NR NCM:\s*(\d+)', text)
             if m: item['ncm'] = m.group(1)
-            m = re.search(r'Part Number:\s*([\S]+)\s*\|\s*Descrição:\s*(.+?)(?=\nFabricante:|$)',
-                          text, re.DOTALL)
+            m = re.search(
+                r'Part Number:\s*([\S]+)\s*\|\s*Descrição:\s*(.+?)(?=\nFabricante:|$)',
+                text, re.DOTALL)
             if m:
                 item['codigo_interno'] = m.group(1).strip()
                 item['descricao']      = re.sub(r'\s+',' ', m.group(2).strip())
@@ -1590,35 +1837,60 @@ class SigrawebPDFParser:
             m = re.search(r'Valor Frete:\s*([\d\.,]+)\s+USD', text)
             if m: item['freteUSD'] = pv(m.group(1))
             m = re.search(r'Valor Frete Real:\s*([\d\.,]+)', text)
-            if m: item['freteReal'] = pv(m.group(1)); item['frete_internacional'] = item['freteReal']
+            if m:
+                item['freteReal'] = pv(m.group(1))
+                item['frete_internacional'] = item['freteReal']
             m = re.search(r'Valor Seguro:\s*([\d\.,]+)\s+USD', text)
             if m: item['seguroUSD'] = pv(m.group(1))
             m = re.search(r'Valor Seguro Real:\s*([\d\.,]+)', text)
-            if m: item['seguroReal'] = pv(m.group(1)); item['seguro_internacional'] = item['seguroReal']
+            if m:
+                item['seguroReal'] = pv(m.group(1))
+                item['seguro_internacional'] = item['seguroReal']
             m = re.search(r'Moeda LI:\s*(.+?)(?:\n|Valor)', text)
             if m: item['moeda'] = m.group(1).strip()
             m = re.search(r'País Origem:\s*(.+?)(?:\n|Fabricante)', text)
             if m: item['paisOrigem'] = m.group(1).strip()
             m = re.search(r'Fornecedor:\s*(.+?)(?:\n|País)', text)
             if m: item['fornecedor_raw'] = m.group(1).strip()
-            m = re.search(r'^II\s+([\d\.,]+)\s+[\d\.,]+\s+[\d\.,]+\s+[\d\.,]+\s+[\d\.,]+\s+([\d\.,]+)\s+([\d\.,]+)',
-                          text, re.MULTILINE)
-            if m: item['ii_aliquota']=pv(m.group(1)); item['ii_base_calculo']=pv(m.group(2)); item['ii_valor_devido']=pv(m.group(3))
-            m = re.search(r'^IPI\s+([\d\.,]+)\s+[\d\.,]+\s+[\d\.,]+\s+[\d\.,]+\s+([\d\.,]+)\s+([\d\.,]+)',
-                          text, re.MULTILINE)
-            if m: item['ipi_aliquota']=pv(m.group(1)); item['ipi_base_calculo']=pv(m.group(2)); item['ipi_valor_devido']=pv(m.group(3))
-            m = re.search(r'^PIS\s+([\d\.,]+)\s+[\d\.,]+\s+[\d\.,]+\s+[\d\.,]+\s+([\d\.,]+)\s+([\d\.,]+)',
-                          text, re.MULTILINE)
-            if m: item['pis_aliquota']=pv(m.group(1)); item['pis_base_calculo']=pv(m.group(2)); item['pis_valor_devido']=pv(m.group(3))
-            m = re.search(r'^COFINS\s+([\d\.,]+)\s+[\d\.,]+\s+[\d\.,]+\s+[\d\.,]+\s+([\d\.,]+)\s+([\d\.,]+)',
-                          text, re.MULTILINE)
-            if m: item['cofins_aliquota']=pv(m.group(1)); item['cofins_base_calculo']=pv(m.group(2)); item['cofins_valor_devido']=pv(m.group(3))
-            item['total_impostos'] = (item['ii_valor_devido']+item['ipi_valor_devido']
-                                      +item['pis_valor_devido']+item['cofins_valor_devido'])
-            item['valor_total_com_impostos'] = pv(str(item['valorTotal']))+item['total_impostos']
+            m = re.search(
+                r'^II\s+([\d\.,]+)\s+[\d\.,]+\s+[\d\.,]+\s+[\d\.,]+\s+[\d\.,]+\s+'
+                r'([\d\.,]+)\s+([\d\.,]+)', text, re.MULTILINE)
+            if m:
+                item['ii_aliquota']=pv(m.group(1))
+                item['ii_base_calculo']=pv(m.group(2))
+                item['ii_valor_devido']=pv(m.group(3))
+            m = re.search(
+                r'^IPI\s+([\d\.,]+)\s+[\d\.,]+\s+[\d\.,]+\s+[\d\.,]+\s+'
+                r'([\d\.,]+)\s+([\d\.,]+)', text, re.MULTILINE)
+            if m:
+                item['ipi_aliquota']=pv(m.group(1))
+                item['ipi_base_calculo']=pv(m.group(2))
+                item['ipi_valor_devido']=pv(m.group(3))
+            m = re.search(
+                r'^PIS\s+([\d\.,]+)\s+[\d\.,]+\s+[\d\.,]+\s+[\d\.,]+\s+'
+                r'([\d\.,]+)\s+([\d\.,]+)', text, re.MULTILINE)
+            if m:
+                item['pis_aliquota']=pv(m.group(1))
+                item['pis_base_calculo']=pv(m.group(2))
+                item['pis_valor_devido']=pv(m.group(3))
+            m = re.search(
+                r'^COFINS\s+([\d\.,]+)\s+[\d\.,]+\s+[\d\.,]+\s+[\d\.,]+\s+'
+                r'([\d\.,]+)\s+([\d\.,]+)', text, re.MULTILINE)
+            if m:
+                item['cofins_aliquota']=pv(m.group(1))
+                item['cofins_base_calculo']=pv(m.group(2))
+                item['cofins_valor_devido']=pv(m.group(3))
+            item['total_impostos'] = (
+                item['ii_valor_devido'] + item['ipi_valor_devido']
+                + item['pis_valor_devido'] + item['cofins_valor_devido']
+            )
+            item['valor_total_com_impostos'] = (
+                pv(str(item['valorTotal'])) + item['total_impostos']
+            )
             return item
         except Exception as e:
-            logger.error(f"Erro item {num_str}: {e}"); return None
+            logger.error(f"Erro item {num_str}: {e}")
+            return None
 
     def _calculate_totals(self):
         if self.documento['itens']:
@@ -1712,17 +1984,22 @@ class DuimpPDFParser:
                 item["valorUnit"]  = self._r(r"Valor unitário na condição de venda:\s*([\d\.,]+)", content)
                 item["valorTotal"] = self._r(r"Valor total na condição de venda:\s*([\d\.,]+)", content)
                 item["moeda"]      = self._r(r"Moeda negociada:\s*(.+)", content)
-                m = re.search(r"Código do Exportador Estrangeiro:\s*(.+?)(?=\n\s*(?:Endereço|Dados))",
-                              content, re.DOTALL)
+                m = re.search(
+                    r"Código do Exportador Estrangeiro:\s*(.+?)(?=\n\s*(?:Endereço|Dados))",
+                    content, re.DOTALL)
                 item["fornecedor_raw"] = m.group(1).strip() if m else ""
-                m = re.search(r"Endereço:\s*(.+?)(?=\n\s*(?:Dados da Mercadoria|Aplicação))",
-                              content, re.DOTALL)
+                m = re.search(
+                    r"Endereço:\s*(.+?)(?=\n\s*(?:Dados da Mercadoria|Aplicação))",
+                    content, re.DOTALL)
                 item["endereco_raw"] = m.group(1).strip() if m else ""
-                m = re.search(r"Detalhamento do Produto:\s*(.+?)(?=\n\s*(?:Número de Identificação|Versão|Código de Class|Descrição complementar))",
-                              content, re.DOTALL)
+                m = re.search(
+                    r"Detalhamento do Produto:\s*(.+?)"
+                    r"(?=\n\s*(?:Número de Identificação|Versão|Código de Class|Descrição complementar))",
+                    content, re.DOTALL)
                 item["descricao"] = m.group(1).strip() if m else ""
-                m = re.search(r"Descrição complementar da mercadoria:\s*(.+?)(?=\n|$)",
-                              content, re.DOTALL)
+                m = re.search(
+                    r"Descrição complementar da mercadoria:\s*(.+?)(?=\n|$)",
+                    content, re.DOTALL)
                 item["desc_complementar"] = m.group(1).strip() if m else ""
                 self.items.append(item)
 
@@ -1993,7 +2270,8 @@ class DataFormatter:
             if isinstance(value, str):
                 value = value.replace('.','').replace(',','.')
             return str(int(round(float(value)*100))).zfill(length)
-        except: return "0"*length
+        except Exception:
+            return "0"*length
 
     @staticmethod
     def format_high_precision(value, length=15):
@@ -2001,7 +2279,8 @@ class DataFormatter:
             if isinstance(value, str):
                 value = value.replace('.','').replace(',','.')
             return str(int(round(float(value)*10000000))).zfill(length)
-        except: return "0"*length
+        except Exception:
+            return "0"*length
 
     @staticmethod
     def format_quantity(value, length=14):
@@ -2009,16 +2288,18 @@ class DataFormatter:
             if isinstance(value, str):
                 value = value.replace('.','').replace(',','.')
             return str(int(round(float(value)*100000))).zfill(length)
-        except: return "0"*length
+        except Exception:
+            return "0"*length
 
     @staticmethod
     def calculate_cbs_ibs(base_xml_string):
         try:
-            bf = int(base_xml_string)/100.0
+            bf  = int(base_xml_string)/100.0
             cbs = str(int(round(bf*0.009*100))).zfill(14)
             ibs = str(int(round(bf*0.001*100))).zfill(14)
             return cbs, ibs
-        except: return "0".zfill(14), "0".zfill(14)
+        except Exception:
+            return "0".zfill(14), "0".zfill(14)
 
     @staticmethod
     def parse_supplier_info(raw_name, raw_addr):
@@ -2027,13 +2308,14 @@ class DataFormatter:
             parts = raw_name.split('-',1)
             data["fornecedorNome"] = parts[-1].strip() if len(parts)>1 else raw_name.strip()
         if raw_addr:
-            ca = DataFormatter.clean_text(raw_addr)
+            ca  = DataFormatter.clean_text(raw_addr)
             pd_ = ca.rsplit('-',1)
             if len(pd_)>1:
                 data["fornecedorCidade"] = pd_[1].strip()
                 street = pd_[0].strip()
             else:
-                data["fornecedorCidade"] = "EXTERIOR"; street = ca
+                data["fornecedorCidade"] = "EXTERIOR"
+                street = ca
             cs = street.rsplit(',',1)
             if len(cs)>1:
                 data["fornecedorLogradouro"] = cs[0].strip()
@@ -2060,7 +2342,8 @@ class XMLBuilder:
             try:
                 if isinstance(val,str): val=val.replace('.','').replace(',','.')
                 return float(val)
-            except: return 0.0
+            except Exception:
+                return 0.0
 
         for it in self.items_to_use:
             totals["frete"]  += gf(it.get("Frete (R$)"))
@@ -2164,8 +2447,10 @@ class XMLBuilder:
                 if k in user_inputs: fmap[k] = user_inputs[k]
 
         receitas = [
-            {"code":"0086","val":totals["ii"]},{"code":"1038","val":totals["ipi"]},
-            {"code":"5602","val":totals["pis"]},{"code":"5629","val":totals["cofins"]},
+            {"code":"0086","val":totals["ii"]},
+            {"code":"1038","val":totals["ipi"]},
+            {"code":"5602","val":totals["pis"]},
+            {"code":"5629","val":totals["cofins"]},
         ]
         if user_inputs and user_inputs.get("valorReceita7811","0") not in ("0","000000000000000"):
             receitas.append({"code":"7811","val":float(user_inputs["valorReceita7811"])})
@@ -2174,12 +2459,13 @@ class XMLBuilder:
             if tag == "embalagem" and user_inputs:
                 parent = etree.SubElement(self.duimp, tag)
                 for sf in dval:
-                    v = user_inputs.get("quantidadeVolume", sf["default"]) if sf["tag"]=="quantidadeVolume" else sf["default"]
+                    v = (user_inputs.get("quantidadeVolume", sf["default"])
+                         if sf["tag"] == "quantidadeVolume" else sf["default"])
                     etree.SubElement(parent, sf["tag"]).text = v
                 continue
             if tag == "pagamento":
                 agencia = user_inputs.get("agenciaPagamento","3715") if user_inputs else "3715"
-                banco   = user_inputs.get("bancoPagamento","341")   if user_inputs else "341"
+                banco   = user_inputs.get("bancoPagamento","341")    if user_inputs else "341"
                 for rec in receitas:
                     if rec["val"] > 0:
                         pag = etree.SubElement(self.duimp, "pagamento")
@@ -2192,12 +2478,15 @@ class XMLBuilder:
                             etree.SubElement(pag, "valorReceita").text = DataFormatter.format_input_fiscal(rec["val"])
                 continue
             if tag in fmap:
-                etree.SubElement(self.duimp, tag).text = fmap[tag]; continue
+                etree.SubElement(self.duimp, tag).text = fmap[tag]
+                continue
             if user_inputs and tag in user_inputs:
-                etree.SubElement(self.duimp, tag).text = user_inputs[tag]; continue
+                etree.SubElement(self.duimp, tag).text = user_inputs[tag]
+                continue
             if isinstance(dval, list):
                 parent = etree.SubElement(self.duimp, tag)
-                for sf in dval: etree.SubElement(parent, sf["tag"]).text = sf["default"]
+                for sf in dval:
+                    etree.SubElement(parent, sf["tag"]).text = sf["default"]
             elif isinstance(dval, dict):
                 parent = etree.SubElement(self.duimp, tag)
                 etree.SubElement(parent, dval["tag"]).text = dval["default"]
@@ -2214,14 +2503,18 @@ class XMLBuilder:
 def _merge_app2_items(df_dest: pd.DataFrame, itens: list) -> tuple:
     src_map: Dict[int, Dict] = {}
     for item in itens:
-        try: src_map[int(item['numero_item'])] = item
-        except Exception: pass
+        try:
+            src_map[int(item['numero_item'])] = item
+        except Exception:
+            pass
 
     count, not_found = 0, []
     for idx, row in df_dest.iterrows():
         try:
             num = int(str(row['numeroAdicao']).strip())
-            if num not in src_map: not_found.append(num); continue
+            if num not in src_map:
+                not_found.append(num)
+                continue
             src = src_map[num]
             df_dest.at[idx,'NUMBER']           = src.get('codigo_interno','')
             df_dest.at[idx,'Frete (R$)']       = src.get('frete_internacional',0.0)
@@ -2244,12 +2537,14 @@ def _merge_app2_items(df_dest: pd.DataFrame, itens: list) -> tuple:
             df_dest.at[idx,'COFINS Base (R$)'] = src.get('cofins_base_calculo',0.0)
             df_dest.at[idx,'COFINS Alíq. (%)'] = src.get('cofins_aliquota',0.0)
             count += 1
-        except Exception: continue
+        except Exception:
+            continue
     return df_dest, count, not_found
 
 
 def _render_totais_grade(df: pd.DataFrame):
-    def _s(col): return pd.to_numeric(df[col], errors='coerce').sum() if col in df.columns else 0
+    def _s(col):
+        return pd.to_numeric(df[col], errors='coerce').sum() if col in df.columns else 0
     t1,t2,t3,t4,t5,t6 = st.columns(6)
     t1.metric("II Total",     f"R$ {_s('II (R$)'):,.2f}")
     t2.metric("IPI Total",    f"R$ {_s('IPI (R$)'):,.2f}")
@@ -2304,7 +2599,6 @@ def sistema_integrado_duimp():
             ph(f'<div class="{bc}">{btx}</div>')
 
         st.divider()
-
         section_title("📂 Carregar Arquivos")
         c1, c2 = st.columns(2, gap="large")
 
@@ -2326,13 +2620,12 @@ def sistema_integrado_duimp():
 
         if file_duimp:
             if (st.session_state["parsed_duimp"] is None or
-                    file_duimp.name != getattr(st.session_state.get("last_duimp"),"name","")):
+                    file_duimp.name != getattr(st.session_state.get("last_duimp"), "name", "")):
                 _td_path = None
                 try:
                     with tempfile.NamedTemporaryFile(delete=False, suffix='.pdf') as _td:
                         _td.write(file_duimp.read())
                         _td_path = _td.name
-
                     p = DuimpPDFParser(_td_path)
                     p.preprocess(); p.extract_header(); p.extract_items()
                     st.session_state["parsed_duimp"] = p
@@ -2350,12 +2643,15 @@ def sistema_integrado_duimp():
                     st.error(f"Erro ao ler DUIMP: {e}")
                 finally:
                     if _td_path and os.path.exists(_td_path):
-                        try: os.unlink(_td_path)
-                        except Exception: pass
+                        try:
+                            os.unlink(_td_path)
+                        except Exception:
+                            pass
 
         if file_app2 and st.session_state["parsed_sigraweb"] is None:
             with tempfile.NamedTemporaryFile(delete=False, suffix='.pdf') as tmp:
-                tmp.write(file_app2.getvalue()); tmp_path = tmp.name
+                tmp.write(file_app2.getvalue())
+                tmp_path = tmp.name
             try:
                 parser_a2 = SigrawebPDFParser() if is_sgw else HafelePDFParser()
                 doc_a2    = parser_a2.parse_pdf(tmp_path)
@@ -2398,8 +2694,10 @@ def sistema_integrado_duimp():
                 st.code(traceback.format_exc())
             finally:
                 if os.path.exists(tmp_path):
-                    try: os.unlink(tmp_path)
-                    except Exception: pass
+                    try:
+                        os.unlink(tmp_path)
+                    except Exception:
+                        pass
 
         st.divider()
         section_title("🔗 Ações")
@@ -2407,7 +2705,7 @@ def sistema_integrado_duimp():
 
         with col_btn:
             if st.button("🔗 VINCULAR DADOS (Cruzamento Automático)",
-                         type="primary", use_container_width=True):
+                         type="primary", **_WS):
                 if (st.session_state["merged_df"] is not None and
                         st.session_state["parsed_sigraweb"] is not None):
                     try:
@@ -2420,7 +2718,8 @@ def sistema_integrado_duimp():
                         with st.expander("📊 Resumo da Vinculação"):
                             _render_totais_grade(df_dest)
                     except Exception as e:
-                        st.error(f"Erro na vinculação: {e}"); st.code(traceback.format_exc())
+                        st.error(f"Erro na vinculação: {e}")
+                        st.code(traceback.format_exc())
                 else:
                     st.warning("Carregue os dois arquivos antes de vincular.")
 
@@ -2428,20 +2727,21 @@ def sistema_integrado_duimp():
             st.markdown('<div style="height:.05rem"></div>', unsafe_allow_html=True)
             rc1, rc2 = st.columns(2)
             with rc1:
-                if st.button("🔄 DUIMP", type="secondary", use_container_width=True):
+                if st.button("🔄 DUIMP", type="secondary", **_WS):
                     st.session_state["parsed_duimp"] = None
                     st.session_state["merged_df"]    = None
                     st.rerun()
             with rc2:
-                if st.button("🔄 APP2", type="secondary", use_container_width=True):
-                    st.session_state["parsed_sigraweb"] = None; st.rerun()
-            if st.button("🗑️ Limpar Tudo", type="secondary", use_container_width=True):
+                if st.button("🔄 APP2", type="secondary", **_WS):
+                    st.session_state["parsed_sigraweb"] = None
+                    st.rerun()
+            if st.button("🗑️ Limpar Tudo", type="secondary", **_WS):
                 for k in ["parsed_duimp","parsed_sigraweb","merged_df","last_duimp"]:
                     st.session_state[k] = None
                 st.rerun()
 
     # ══════════════════════════════════════════════════════════════════════
-    # TAB 2 — CONFERÊNCIA (inalterada)
+    # TAB 2 — CONFERÊNCIA
     # ══════════════════════════════════════════════════════════════════════
     with tab_conf:
         section_title("📋 Conferência e Edição")
@@ -2471,7 +2771,7 @@ def sistema_integrado_duimp():
                                  'fobEUR','fobBRL','freteUSD','freteBRL',
                                  'seguroUSD','seguroBRL','cifUSD','cifBRL',
                                  'valorAduaneiroUSD','valorAduaneiroBRL']]}
-                    st.dataframe(pd.DataFrame(dados), use_container_width=True, hide_index=True)
+                    st.dataframe(pd.DataFrame(dados), **_WS, hide_index=True)
 
             lbl_exp = "Sigraweb" if st.session_state["layout_app2"]=="sigraweb" else "Extrato DUIMP"
             with st.expander(f"📑 Adições Extraídas — {lbl_exp}"):
@@ -2501,7 +2801,7 @@ def sistema_integrado_duimp():
                         'Total Imp.':   it.get('total_impostos',0),
                     } for it in itens_a2]
                     dfa2 = pd.DataFrame(rows)
-                    st.dataframe(dfa2, use_container_width=True, height=340)
+                    st.dataframe(dfa2, **_WS, height=340)
                     tt1,tt2,tt3,tt4,tt5 = st.columns(5)
                     tt1.metric("Vlr Adu. Total",f"R$ {dfa2['Vlr Adu. BRL'].sum():,.2f}")
                     tt2.metric("II Total",      f"R$ {dfa2['II R$'].sum():,.2f}")
@@ -2539,9 +2839,11 @@ def sistema_integrado_duimp():
                 "COFINS Alíq. (%)": st.column_config.NumberColumn("COF %",   format="%.4f"),
                 "COFINS (R$)":      st.column_config.NumberColumn("COF R$",  format="R$ %.2f"),
             }
-            edf = st.data_editor(st.session_state["merged_df"],
-                                 hide_index=True, column_config=ccfg,
-                                 use_container_width=True, height=540)
+            edf = st.data_editor(
+                st.session_state["merged_df"],
+                hide_index=True, column_config=ccfg,
+                **_WS, height=540,
+            )
             for tax in ['II','IPI','PIS','COFINS']:
                 bc_ = f"{tax} Base (R$)"; ac_ = f"{tax} Alíq. (%)"; vc_ = f"{tax} (R$)"
                 if bc_ in edf.columns and ac_ in edf.columns:
@@ -2556,7 +2858,7 @@ def sistema_integrado_duimp():
                         "Carregue os arquivos e execute a vinculação na aba Upload")
 
     # ══════════════════════════════════════════════════════════════════════
-    # TAB 3 — EXPORTAR XML (inalterada)
+    # TAB 3 — EXPORTAR XML
     # ══════════════════════════════════════════════════════════════════════
     with tab_xml:
         section_title("⚙️ Configurações do XML Final (Layout 8686)")
@@ -2618,24 +2920,27 @@ def sistema_integrado_duimp():
         st.divider()
 
         if st.session_state["merged_df"] is not None:
-            if st.button("⚙️ Gerar XML (Layout 8686)", type="primary",
-                         use_container_width=True):
+            if st.button("⚙️ Gerar XML (Layout 8686)", type="primary", **_WS):
                 try:
                     p       = st.session_state["parsed_duimp"]
                     records = st.session_state["merged_df"].to_dict("records")
                     for i, item in enumerate(p.items):
-                        if i < len(records): item.update(records[i])
+                        if i < len(records):
+                            item.update(records[i])
                     builder   = XMLBuilder(p)
                     xml_bytes = builder.build(user_inputs=user_xml)
                     duimp_num = p.header.get("numeroDUIMP","0000").replace("/","-")
-                    st.download_button("⬇️ Baixar XML", data=xml_bytes,
-                                       file_name=f"DUIMP_{duimp_num}_INTEGRADO.xml",
-                                       mime="text/xml", use_container_width=True)
+                    st.download_button(
+                        "⬇️ Baixar XML", data=xml_bytes,
+                        file_name=f"DUIMP_{duimp_num}_INTEGRADO.xml",
+                        mime="text/xml", **_WS,
+                    )
                     st.success("✅ XML gerado com sucesso!")
                     with st.expander("👁️ Preview XML"):
                         st.code(xml_bytes.decode('utf-8', errors='ignore')[:3000], language='xml')
                 except Exception as e:
-                    st.error(f"Erro: {e}"); st.code(traceback.format_exc())
+                    st.error(f"Erro: {e}")
+                    st.code(traceback.format_exc())
         else:
             empty_state("💾", "Nenhum dado disponível",
                         "Realize o upload e a vinculação antes de gerar o XML")
@@ -2649,6 +2954,7 @@ def main():
 
     ph("""
     <div class="hero">
+        <div class="hero-glow-left"></div>
         <img src="https://raw.githubusercontent.com/DaniloNs-creator/final/7ea6ab2a610ef8f0c11be3c34f046e7ff2cdfc6a/haefele_logo.png"
              class="hero-logo" alt="Häfele">
         <h1 class="hero-title">Sistema de Processamento Unificado 2026</h1>
