@@ -20,40 +20,355 @@ st.set_page_config(
     page_title="MasterSAF — Automação XML",
     page_icon="⚡",
     layout="wide",
-    initial_sidebar_state="expanded",
+    initial_sidebar_state="collapsed",
 )
 
 st.markdown("""
 <style>
-@import url('https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,500;0,9..40,700;1,9..40,300&display=swap');
-#MainMenu {visibility: hidden;} footer {visibility: hidden;} header {visibility: hidden;}
-html, body, [data-testid="stAppViewContainer"] { background: #0a0c10 !important; color: #d4dbe8 !important; font-family: 'DM Sans', sans-serif !important; }
-[data-testid="stSidebar"] { background: #0e1117 !important; border-right: 1px solid #1e2535 !important; }
-[data-testid="stSidebar"] * { color: #c4ccd8 !important; }
-.hero { padding: 2.5rem 0 1.5rem; border-bottom: 1px solid #1e2535; margin-bottom: 2rem; }
-.hero-tag { font-family: 'Space Mono', monospace; font-size: 0.7rem; letter-spacing: 0.2em; color: #00e5a0; text-transform: uppercase; margin-bottom: 0.5rem; }
-.hero-title { font-family: 'Space Mono', monospace; font-size: 2.1rem; font-weight: 700; color: #eef2ff; line-height: 1.15; margin: 0; }
-.hero-title span { color: #00e5a0; }
-.hero-subtitle { font-size: 0.95rem; color: #6b7a99; margin-top: 0.5rem; font-weight: 300; }
-[data-testid="stProgress"] > div > div { background: linear-gradient(90deg, #00e5a0, #0070f3) !important; border-radius: 4px !important; }
-[data-testid="stProgress"] > div { background: #1e2535 !important; border-radius: 4px !important; height: 6px !important; }
-[data-testid="stTextInput"] input, [data-testid="stNumberInput"] input { background: #070910 !important; border: 1px solid #1e2535 !important; border-radius: 6px !important; color: #d4dbe8 !important; font-family: 'Space Mono', monospace !important; font-size: 0.82rem !important; }
-[data-testid="stSidebar"] label { font-family: 'Space Mono', monospace !important; font-size: 0.72rem !important; letter-spacing: 0.1em !important; text-transform: uppercase !important; color: #4a5568 !important; }
-[data-testid="stSidebar"] .stButton button { background: linear-gradient(135deg, #00e5a0, #0070f3) !important; color: #020408 !important; font-family: 'Space Mono', monospace !important; font-weight: 700 !important; font-size: 0.82rem !important; border: none !important; border-radius: 6px !important; padding: 0.75rem 1.5rem !important; width: 100% !important; }
-.stDownloadButton button { background: #0e1117 !important; color: #00e5a0 !important; border: 1px solid #00e5a0 !important; font-family: 'Space Mono', monospace !important; font-size: 0.8rem !important; border-radius: 6px !important; padding: 0.65rem 1.4rem !important; }
-.section-label { font-family: 'Space Mono', monospace; font-size: 0.65rem; letter-spacing: 0.2em; color: #4a5568; text-transform: uppercase; margin-bottom: 0.8rem; margin-top: 1.8rem; border-bottom: 1px solid #1e2535; padding-bottom: 0.4rem; }
-.sidebar-logo { font-family: 'Space Mono', monospace; font-size: 0.95rem; font-weight: 700; color: #eef2ff; padding: 1.2rem 0 1.5rem; border-bottom: 1px solid #1e2535; margin-bottom: 1.2rem; }
-.sidebar-logo span { color: #00e5a0; }
-.resumo-card { background: #0e1117; border: 1px solid #1e2535; border-radius: 10px; padding: 1.2rem 1.5rem; margin-bottom: 0.8rem; }
-.resumo-card .label { font-family: 'Space Mono', monospace; font-size: 0.65rem; letter-spacing: 0.15em; color: #4a5568; text-transform: uppercase; }
-.resumo-card .value { font-family: 'Space Mono', monospace; font-size: 1.4rem; font-weight: 700; color: #00e5a0; margin-top: 0.2rem; }
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap');
+
+#MainMenu, footer, header, [data-testid="stSidebar"], [data-testid="collapsedControl"] {
+    display: none !important;
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+
+html, body, [data-testid="stAppViewContainer"], [data-testid="stMain"] {
+    background: #060810 !important;
+    color: #e2e8f0 !important;
+    font-family: 'Inter', sans-serif !important;
+}
+
+[data-testid="stMainBlockContainer"] {
+    padding: 0 !important;
+    max-width: 100% !important;
+}
+
+/* ── TOP NAV ── */
+.nav-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 1rem 2.5rem;
+    border-bottom: 1px solid rgba(255,255,255,0.06);
+    background: rgba(6,8,16,0.95);
+    backdrop-filter: blur(12px);
+    position: sticky;
+    top: 0;
+    z-index: 100;
+}
+.nav-logo {
+    font-family: 'JetBrains Mono', monospace;
+    font-weight: 600;
+    font-size: 1.05rem;
+    color: #f8fafc;
+    letter-spacing: -0.01em;
+}
+.nav-logo em { color: #22d3a5; font-style: normal; }
+.nav-badge {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.68rem;
+    color: #22d3a5;
+    background: rgba(34,211,165,0.1);
+    border: 1px solid rgba(34,211,165,0.25);
+    border-radius: 20px;
+    padding: 0.25rem 0.8rem;
+    letter-spacing: 0.08em;
+}
+
+/* ── HERO ── */
+.hero-wrap {
+    padding: 3.5rem 2.5rem 2.5rem;
+    max-width: 1100px;
+    margin: 0 auto;
+}
+.hero-eyebrow {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.72rem;
+    color: #22d3a5;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    margin-bottom: 1rem;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+.hero-eyebrow::before {
+    content: '';
+    display: inline-block;
+    width: 24px; height: 1px;
+    background: #22d3a5;
+}
+.hero-h1 {
+    font-size: clamp(2rem, 4vw, 3.2rem);
+    font-weight: 800;
+    color: #f8fafc;
+    line-height: 1.1;
+    letter-spacing: -0.03em;
+    margin: 0 0 0.8rem;
+}
+.hero-h1 span { 
+    background: linear-gradient(135deg, #22d3a5, #3b82f6);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+}
+.hero-sub {
+    font-size: 1rem;
+    color: #64748b;
+    font-weight: 400;
+    max-width: 560px;
+    line-height: 1.6;
+}
+
+/* ── MAIN GRID ── */
+.main-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1.5rem;
+    max-width: 1100px;
+    margin: 0 auto;
+    padding: 0 2.5rem 2rem;
+}
+@media (max-width: 768px) {
+    .main-grid { grid-template-columns: 1fr; }
+}
+
+/* ── CARDS ── */
+.card {
+    background: #0d1117;
+    border: 1px solid rgba(255,255,255,0.07);
+    border-radius: 16px;
+    padding: 1.5rem;
+    transition: border-color 0.2s;
+}
+.card:hover { border-color: rgba(34,211,165,0.2); }
+.card-title {
+    font-size: 0.7rem;
+    font-weight: 600;
+    color: #475569;
+    text-transform: uppercase;
+    letter-spacing: 0.14em;
+    margin-bottom: 1.2rem;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+.card-title::after {
+    content: '';
+    flex: 1;
+    height: 1px;
+    background: rgba(255,255,255,0.05);
+}
+
+/* ── INPUTS ── */
+[data-testid="stTextInput"] input,
+[data-testid="stNumberInput"] input,
+[data-testid="stPasswordInput"] input {
+    background: #070a0f !important;
+    border: 1px solid rgba(255,255,255,0.08) !important;
+    border-radius: 10px !important;
+    color: #e2e8f0 !important;
+    font-family: 'Inter', sans-serif !important;
+    font-size: 0.88rem !important;
+    padding: 0.6rem 0.9rem !important;
+    transition: border-color 0.2s !important;
+}
+[data-testid="stTextInput"] input:focus,
+[data-testid="stNumberInput"] input:focus,
+[data-testid="stPasswordInput"] input:focus {
+    border-color: rgba(34,211,165,0.5) !important;
+    box-shadow: 0 0 0 3px rgba(34,211,165,0.08) !important;
+    outline: none !important;
+}
+[data-testid="stTextInput"] label,
+[data-testid="stNumberInput"] label,
+[data-testid="stPasswordInput"] label {
+    font-size: 0.78rem !important;
+    font-weight: 500 !important;
+    color: #94a3b8 !important;
+    margin-bottom: 0.3rem !important;
+}
+
+/* ── CHECKBOX ── */
+[data-testid="stCheckbox"] label {
+    font-size: 0.85rem !important;
+    color: #94a3b8 !important;
+    gap: 0.6rem !important;
+}
+[data-testid="stCheckbox"] span[data-baseweb="checkbox"] {
+    background: #070a0f !important;
+    border-color: rgba(255,255,255,0.15) !important;
+    border-radius: 5px !important;
+}
+
+/* ── MAIN BUTTON ── */
+.stButton > button {
+    background: linear-gradient(135deg, #22d3a5 0%, #3b82f6 100%) !important;
+    color: #020408 !important;
+    font-family: 'Inter', sans-serif !important;
+    font-weight: 700 !important;
+    font-size: 0.88rem !important;
+    border: none !important;
+    border-radius: 10px !important;
+    padding: 0.75rem 2rem !important;
+    width: 100% !important;
+    letter-spacing: 0.01em !important;
+    transition: opacity 0.2s, transform 0.15s !important;
+    cursor: pointer !important;
+}
+.stButton > button:hover {
+    opacity: 0.9 !important;
+    transform: translateY(-1px) !important;
+}
+.stButton > button:active { transform: translateY(0) !important; }
+
+/* ── DOWNLOAD BUTTON ── */
+.stDownloadButton > button {
+    background: transparent !important;
+    color: #22d3a5 !important;
+    border: 1px solid rgba(34,211,165,0.4) !important;
+    font-family: 'Inter', sans-serif !important;
+    font-weight: 600 !important;
+    font-size: 0.85rem !important;
+    border-radius: 10px !important;
+    padding: 0.7rem 1.5rem !important;
+    width: 100% !important;
+    transition: all 0.2s !important;
+}
+.stDownloadButton > button:hover {
+    background: rgba(34,211,165,0.1) !important;
+    border-color: #22d3a5 !important;
+}
+
+/* ── PROGRESS ── */
+[data-testid="stProgress"] > div {
+    background: rgba(255,255,255,0.05) !important;
+    border-radius: 99px !important;
+    height: 5px !important;
+}
+[data-testid="stProgress"] > div > div {
+    background: linear-gradient(90deg, #22d3a5, #3b82f6) !important;
+    border-radius: 99px !important;
+}
+
+/* ── ALERT ── */
+[data-testid="stAlert"] {
+    background: #0d1117 !important;
+    border-radius: 10px !important;
+    border-left: 3px solid !important;
+    font-family: 'Inter', sans-serif !important;
+    font-size: 0.82rem !important;
+}
+
+/* ── STAT CARDS ── */
+.stat-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 1rem;
+    max-width: 1100px;
+    margin: 0 auto;
+    padding: 0 2.5rem 1.5rem;
+}
+@media (max-width: 768px) {
+    .stat-grid { grid-template-columns: repeat(2, 1fr); }
+}
+.stat-card {
+    background: #0d1117;
+    border: 1px solid rgba(255,255,255,0.07);
+    border-radius: 14px;
+    padding: 1.2rem 1.4rem;
+}
+.stat-label {
+    font-size: 0.68rem;
+    font-weight: 600;
+    color: #475569;
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    margin-bottom: 0.5rem;
+}
+.stat-value {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 1.5rem;
+    font-weight: 600;
+    color: #22d3a5;
+    line-height: 1;
+}
+.stat-sub {
+    font-size: 0.72rem;
+    color: #475569;
+    margin-top: 0.3rem;
+}
+
+/* ── EXEC SECTION ── */
+.exec-wrap {
+    max-width: 1100px;
+    margin: 0 auto;
+    padding: 0 2.5rem 2rem;
+}
+.exec-header {
+    font-size: 0.7rem;
+    font-weight: 600;
+    color: #475569;
+    text-transform: uppercase;
+    letter-spacing: 0.14em;
+    margin-bottom: 1rem;
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+}
+.exec-header .dot {
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    background: #22d3a5;
+    animation: pulse 1.5s infinite;
+}
+@keyframes pulse {
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50% { opacity: 0.5; transform: scale(0.8); }
+}
+
+/* ── DL SECTION ── */
+.dl-wrap {
+    max-width: 1100px;
+    margin: 0 auto;
+    padding: 0 2.5rem 3rem;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1rem;
+}
+@media (max-width: 768px) { .dl-wrap { grid-template-columns: 1fr; } }
+
+/* ── DIVIDER ── */
+.divider {
+    max-width: 1100px;
+    margin: 0 auto 1.5rem;
+    padding: 0 2.5rem;
+}
+.divider hr {
+    border: none;
+    border-top: 1px solid rgba(255,255,255,0.05);
+}
+
+/* ── CODE BLOCK (log) ── */
+[data-testid="stCode"] {
+    background: #070a0f !important;
+    border: 1px solid rgba(255,255,255,0.06) !important;
+    border-radius: 12px !important;
+    font-family: 'JetBrains Mono', monospace !important;
+    font-size: 0.75rem !important;
+}
 </style>
 """, unsafe_allow_html=True)
 
-# ── NAMESPACES CT-e ───────────────────────────
+# ─────────────────────────────────────────────
+# NAMESPACES CT-e
+# ─────────────────────────────────────────────
 CTE_NAMESPACES = {'cte': 'http://www.portalfiscal.inf.br/cte'}
 
-# ── CLASSE CTeProcessor (portada do desktop) ──
+# ─────────────────────────────────────────────
+# CTeProcessor
+# ─────────────────────────────────────────────
 class CTeProcessor:
     def __init__(self):
         self.processed_data = []
@@ -178,7 +493,6 @@ class CTeProcessor:
             return None
 
     def process_zip_bytes(self, zip_bytes, log_fn=None):
-        """Lê bytes de um ZIP e processa cada XML de CT-e interno."""
         try:
             with zipfile.ZipFile(io.BytesIO(zip_bytes)) as zf:
                 xml_names = [n for n in zf.namelist() if n.lower().endswith('.xml')]
@@ -198,7 +512,6 @@ class CTeProcessor:
                 log_fn(f"      ❌ Erro ao ler ZIP: {e}")
 
     def process_directory(self, directory, log_fn=None):
-        """Processa todos os ZIPs (e XMLs soltos) em um diretório."""
         base = Path(directory)
         zip_files = list(base.glob('*.zip'))
         if log_fn:
@@ -219,7 +532,6 @@ class CTeProcessor:
                 pass
 
     def export_to_excel_bytes(self):
-        """Retorna (bytes_excel, num_registros) para st.download_button."""
         if not self.processed_data:
             return None, 0
         df = pd.DataFrame(self.processed_data)
@@ -228,9 +540,8 @@ class CTeProcessor:
             df.to_excel(writer, index=False, sheet_name='Dados_CTe')
             ws = writer.sheets['Dados_CTe']
             from openpyxl.styles import Font, PatternFill, Alignment
-            from openpyxl.utils import get_column_letter
-            hf = PatternFill('solid', start_color='0D1B2A', end_color='0D1B2A')
-            hfont = Font(bold=True, color='00E5A0', name='Arial', size=10)
+            hf    = PatternFill('solid', start_color='0D1B2A', end_color='0D1B2A')
+            hfont = Font(bold=True, color='22D3A5', name='Inter', size=10)
             for cell in ws[1]:
                 cell.fill = hf
                 cell.font = hfont
@@ -258,33 +569,75 @@ class CTeProcessor:
             'emitentes':   df['Emitente'].nunique(),
         }
 
-# ── HERO ──────────────────────────────────────
+# ─────────────────────────────────────────────
+# NAV BAR
+# ─────────────────────────────────────────────
 st.markdown("""
-<div class="hero">
-    <div class="hero-tag">⚡ Sistema de Automação Fiscal</div>
-    <h1 class="hero-title">Master<span>SAF</span> Downloads XML</h1>
-    <p class="hero-subtitle">Captura e processamento automatizado de CT-e — download + Excel consolidado em uma única operação</p>
+<div class="nav-bar">
+    <div class="nav-logo">MASTER<em>SAF</em> <span style="color:#334155;font-weight:300;">//</span></div>
+    <div class="nav-badge">⚡ AUTOMAÇÃO FISCAL v2</div>
 </div>
 """, unsafe_allow_html=True)
 
-# ── SIDEBAR ───────────────────────────────────
-with st.sidebar:
-    st.markdown('<div class="sidebar-logo">MASTER<span>SAF</span> //</div>', unsafe_allow_html=True)
-    st.markdown('<div class="section-label">Credenciais</div>', unsafe_allow_html=True)
-    usuario  = st.text_input("Usuário", placeholder="login@empresa.com.br")
-    senha    = st.text_input("Senha", type="password", placeholder="••••••••")
-    st.markdown('<div class="section-label">Período</div>', unsafe_allow_html=True)
-    data_ini = st.text_input("Data Inicial", value="08/05/2026")
-    data_fin = st.text_input("Data Final",   value="08/05/2026")
-    st.markdown('<div class="section-label">Parâmetros</div>', unsafe_allow_html=True)
-    qtd_loops = st.number_input("Qtd. Páginas (Loops)", min_value=1, max_value=1000, value=5)
-    st.markdown('<div class="section-label">Saída</div>', unsafe_allow_html=True)
+# ─────────────────────────────────────────────
+# HERO
+# ─────────────────────────────────────────────
+st.markdown("""
+<div class="hero-wrap">
+    <div class="hero-eyebrow">Sistema de Automação CT-e</div>
+    <h1 class="hero-h1">Download e <span>processamento</span><br>de XMLs em massa</h1>
+    <p class="hero-sub">Configure as credenciais, período e parâmetros abaixo. O sistema baixa, extrai e consolida todos os CT-es em um Excel formatado.</p>
+</div>
+""", unsafe_allow_html=True)
+
+# ─────────────────────────────────────────────
+# FORMULÁRIO — GRID 2 COLUNAS
+# ─────────────────────────────────────────────
+st.markdown('<div class="main-grid">', unsafe_allow_html=True)
+
+col_a, col_b = st.columns(2, gap="large")
+
+with col_a:
+    st.markdown('<div class="card"><div class="card-title">🔑 Credenciais de Acesso</div>', unsafe_allow_html=True)
+    usuario = st.text_input("Usuário", placeholder="login@empresa.com.br", key="usuario")
+    senha   = st.text_input("Senha",   type="password", placeholder="••••••••", key="senha")
+    st.markdown('</div>', unsafe_allow_html=True)
+
+    st.markdown('<div class="card" style="margin-top:1.5rem"><div class="card-title">📅 Período de Busca</div>', unsafe_allow_html=True)
+    p1, p2 = st.columns(2)
+    with p1:
+        data_ini = st.text_input("Data Inicial", value="08/05/2026", key="dt_ini")
+    with p2:
+        data_fin = st.text_input("Data Final",   value="08/05/2026", key="dt_fin")
+    st.markdown('</div>', unsafe_allow_html=True)
+
+with col_b:
+    st.markdown('<div class="card"><div class="card-title">⚙️ Parâmetros de Execução</div>', unsafe_allow_html=True)
+    qtd_loops = st.number_input(
+        "Quantidade de Páginas (Loops)",
+        min_value=1, max_value=1000, value=5,
+        help="Cada loop processa uma página de até 200 CT-es."
+    )
+    st.markdown("<br>", unsafe_allow_html=True)
     gerar_excel = st.checkbox("Gerar Excel consolidado dos CT-es", value=True)
     gerar_zip   = st.checkbox("Disponibilizar ZIP com XMLs brutos", value=True)
-    st.markdown("<br>", unsafe_allow_html=True)
-    iniciar = st.button("⚡ Iniciar Automação")
+    st.markdown('</div>', unsafe_allow_html=True)
 
-# ── DRIVER ────────────────────────────────────
+    st.markdown('<div class="card" style="margin-top:1.5rem"><div class="card-title">🚀 Executar</div>', unsafe_allow_html=True)
+    st.markdown("""
+    <p style="font-size:0.82rem;color:#475569;margin-bottom:1rem;line-height:1.6;">
+        O navegador será executado em <strong style="color:#94a3b8">modo headless</strong> (invisível).
+        Você pode acompanhar o progresso abaixo em tempo real.
+    </p>
+    """, unsafe_allow_html=True)
+    iniciar = st.button("⚡  Iniciar Automação", key="btn_iniciar")
+    st.markdown('</div>', unsafe_allow_html=True)
+
+st.markdown('</div>', unsafe_allow_html=True)  # fecha .main-grid
+
+# ─────────────────────────────────────────────
+# DRIVER
+# ─────────────────────────────────────────────
 def get_driver(download_path):
     opts = Options()
     opts.add_argument("--headless=new")
@@ -308,7 +661,9 @@ def get_driver(download_path):
     opts.add_experimental_option("excludeSwitches", ["enable-logging"])
     # Descomente se necessário no Windows:
     # opts.binary_location = r"C:\Program Files\Google\Chrome\Application\chrome.exe"
-    return webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=opts)
+    return webdriver.Chrome(
+        service=Service(ChromeDriverManager().install()), options=opts)
+
 
 def esperar_downloads(directory, timeout=120):
     start = time.time()
@@ -318,26 +673,37 @@ def esperar_downloads(directory, timeout=120):
         time.sleep(1)
     return False
 
-# ── LÓGICA PRINCIPAL ─────────────────────────
+# ─────────────────────────────────────────────
+# EXECUÇÃO
+# ─────────────────────────────────────────────
 if iniciar:
     if not usuario or not senha:
-        st.error("⚠️ Atenção: Preencha o usuário e a senha para continuar.")
+        st.error("⚠️ Preencha o usuário e a senha para continuar.")
     else:
         dl_path = tempfile.mkdtemp(prefix="mastersaf_web_")
-        st.markdown('<div class="section-label">Execução</div>', unsafe_allow_html=True)
-        status_box   = st.info("Inicializando ambiente e navegador...")
-        progress_bar = st.progress(0)
-        log_area     = st.empty()
-        log_lines    = []
+
+        st.markdown('<div class="divider"><hr></div>', unsafe_allow_html=True)
+        st.markdown("""
+        <div class="exec-wrap">
+            <div class="exec-header"><span class="dot"></span>Execução em Tempo Real</div>
+        </div>
+        """, unsafe_allow_html=True)
+
+        with st.container():
+            status_box   = st.info("⏳ Inicializando ambiente e navegador...")
+            progress_bar = st.progress(0)
+            log_area     = st.empty()
+
+        log_lines = []
 
         def log(msg):
             ts = datetime.now().strftime("%H:%M:%S")
-            log_lines.append(f"[{ts}] {msg}")
-            log_area.code("\n".join(log_lines[-30:]), language=None)
+            log_lines.append(f"[{ts}]  {msg}")
+            log_area.code("\n".join(log_lines[-35:]), language=None)
 
         driver = None
         try:
-            log("🌐 Iniciando navegador em modo headless...")
+            log("🌐 Iniciando Chrome em modo headless...")
             driver = get_driver(dl_path)
 
             status_box.info("🔑 Autenticando no MasterSAF...")
@@ -349,17 +715,17 @@ if iniciar:
             driver.execute_script("arguments[0].click();",
                 driver.find_element(By.XPATH, '//*[@id="enter"]'))
             time.sleep(5)
-            log("✅ Login realizado")
+            log("✅ Login realizado com sucesso")
             progress_bar.progress(0.05)
 
             status_box.info("📋 Navegando até Listagem de CT-es...")
             driver.execute_script("arguments[0].click();",
                 driver.find_element(By.XPATH, '//*[@id="linkListagemReceptorCTEs"]/a'))
             time.sleep(5)
-            log("📋 Listagem Receptor CT-es acessada")
+            log("📋 Módulo Listagem Receptor CT-es acessado")
             progress_bar.progress(0.08)
 
-            log(f"📅 Configurando período: {data_ini} → {data_fin}")
+            log(f"📅 Definindo período: {data_ini} → {data_fin}")
             for xpath, val in [
                 ('//*[@id="consultaDataInicial"]', data_ini),
                 ('//*[@id="consultaDataFinal"]',   data_fin),
@@ -386,10 +752,10 @@ if iniciar:
             time.sleep(3)
             progress_bar.progress(0.15)
 
-            log(f"📥 Iniciando loop de {int(qtd_loops)} página(s)...")
+            log(f"📥 Loop de download iniciado — {int(qtd_loops)} página(s)")
 
             for i in range(int(qtd_loops)):
-                log(f"📄 Página {i + 1}/{int(qtd_loops)}")
+                log(f"━━ Página {i + 1} / {int(qtd_loops)}")
                 try:
                     cb = driver.find_element(
                         By.XPATH, '//*[@id="jqgh_listagem_checkBox"]/div/input')
@@ -397,7 +763,7 @@ if iniciar:
                         cb.click()
                     time.sleep(2)
                 except Exception:
-                    log("   ⚠ Não foi possível marcar checkboxes")
+                    log("   ⚠  Não foi possível marcar checkboxes")
 
                 try:
                     driver.execute_script("arguments[0].click();",
@@ -406,9 +772,9 @@ if iniciar:
                     driver.execute_script("arguments[0].click();",
                         driver.find_element(By.XPATH, '//*[@id="downloadEmMassaXml"]'))
                 except Exception:
-                    log("   ⚠ Erro ao clicar no botão de download em massa")
+                    log("   ⚠  Botão de download em massa não encontrado")
 
-                log("   ⏳ Aguardando download...")
+                log("   ⏳ Aguardando download finalizar...")
                 esperar_downloads(dl_path, timeout=120)
                 time.sleep(2)
 
@@ -427,7 +793,7 @@ if iniciar:
                             By.XPATH, '//*[@id="next_plistagem"]/span').click()
                         time.sleep(5)
                     except Exception:
-                        log("   ⚠ Fim das páginas disponíveis")
+                        log("   ⚠  Fim das páginas disponíveis")
                         break
 
                 pct = 0.15 + ((i + 1) / int(qtd_loops)) * 0.60
@@ -435,26 +801,25 @@ if iniciar:
                 status_box.info(
                     f"⏳ Baixando XMLs — {i + 1} de {int(qtd_loops)} páginas concluídas...")
 
-            log("✅ Downloads concluídos!")
+            log("✅ Todos os downloads concluídos")
             driver.quit()
             driver = None
             progress_bar.progress(0.78)
 
-            # ── Processamento XML → Excel ──────────────
+            # ── Processamento ──────────────────────────
             processor = CTeProcessor()
-            zip_files_found = list(Path(dl_path).glob('*.zip'))
-            log(f"🔍 {len(zip_files_found)} ZIP(s) localizado(s)")
+            zip_found = list(Path(dl_path).glob('*.zip'))
+            log(f"🔍 {len(zip_found)} arquivo(s) ZIP localizado(s)")
 
-            if gerar_excel and zip_files_found:
-                status_box.info("📊 Processando XMLs e gerando Excel...")
+            if gerar_excel and zip_found:
+                status_box.info("📊 Processando XMLs e montando Excel...")
                 processor.process_directory(dl_path, log)
-                log(f"📊 Total de CT-es: {len(processor.processed_data)}")
+                log(f"📊 CT-es identificados: {len(processor.processed_data)}")
             progress_bar.progress(0.92)
 
-            # ── ZIP bruto ──────────────────────────────
             zip_buf = None
             if gerar_zip:
-                log("📦 Compactando XMLs brutos...")
+                log("📦 Empacotando XMLs brutos...")
                 buf_io = io.BytesIO()
                 with zipfile.ZipFile(buf_io, 'w', zipfile.ZIP_DEFLATED) as zipf:
                     for root_dir, _, files in os.walk(dl_path):
@@ -464,30 +829,43 @@ if iniciar:
                 zip_buf = buf_io.getvalue()
 
             progress_bar.progress(1.0)
-            status_box.success("✅ Processamento concluído com sucesso!")
-            log("🏁 Tudo pronto!")
+            status_box.success("✅ Automação concluída com sucesso!")
+            log("🏁 Pipeline completo.")
 
-            # ── Cards de resumo ────────────────────────
+            shutil.rmtree(dl_path, ignore_errors=True)
+
+            # ── Stats ──────────────────────────────────
             if gerar_excel and processor.processed_data:
                 summ = processor.summary()
-                st.markdown('<div class="section-label">Resumo dos CT-es Processados</div>', unsafe_allow_html=True)
-                c1, c2, c3, c4 = st.columns(4)
-                for col, label, value in [
-                    (c1, "CT-es",       f"{summ['total']:,}"),
-                    (c2, "Peso Bruto",  f"{summ['peso_total']:,.0f} kg"),
-                    (c3, "Valor Total", f"R$ {summ['valor_total']:,.2f}"),
-                    (c4, "Emitentes",   f"{summ['emitentes']}"),
-                ]:
-                    with col:
-                        st.markdown(f"""
-                        <div class="resumo-card">
-                            <div class="label">{label}</div>
-                            <div class="value">{value}</div>
-                        </div>""", unsafe_allow_html=True)
+                st.markdown('<div class="divider"><hr></div>', unsafe_allow_html=True)
+                st.markdown(f"""
+                <div class="stat-grid">
+                    <div class="stat-card">
+                        <div class="stat-label">CT-es Processados</div>
+                        <div class="stat-value">{summ['total']:,}</div>
+                        <div class="stat-sub">documentos fiscais</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-label">Peso Bruto Total</div>
+                        <div class="stat-value">{summ['peso_total']:,.0f}</div>
+                        <div class="stat-sub">quilogramas</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-label">Valor Total</div>
+                        <div class="stat-value">R$ {summ['valor_total']:,.2f}</div>
+                        <div class="stat-sub">prestação de serviço</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-label">Emitentes Únicos</div>
+                        <div class="stat-value">{summ['emitentes']}</div>
+                        <div class="stat-sub">transportadoras</div>
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
 
-            # ── Botões de download ─────────────────────
-            st.markdown('<div class="section-label">Downloads</div>', unsafe_allow_html=True)
-            dl1, dl2 = st.columns(2)
+            # ── Downloads ──────────────────────────────
+            st.markdown('<div class="divider"><hr></div>', unsafe_allow_html=True)
+            dl1, dl2 = st.columns(2, gap="large")
 
             if gerar_excel:
                 if processor.processed_data:
@@ -496,7 +874,7 @@ if iniciar:
                         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
                         with dl1:
                             st.download_button(
-                                label=f"📊 DOWNLOAD EXCEL ({n_reg} CT-es)",
+                                label=f"📊  Download Excel — {n_reg} CT-es",
                                 data=excel_bytes,
                                 file_name=f"CTe_Processados_{ts}.xlsx",
                                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -508,17 +886,15 @@ if iniciar:
             if gerar_zip and zip_buf:
                 with dl2:
                     st.download_button(
-                        label="📥 DOWNLOAD ZIP (XMLs brutos)",
+                        label="📥  Download ZIP — XMLs brutos",
                         data=zip_buf,
                         file_name="XMLs_MasterSaf.zip",
                         mime="application/zip",
                     )
 
-            shutil.rmtree(dl_path, ignore_errors=True)
-
         except Exception as e:
-            st.error(f"❌ Ocorreu um erro técnico: {e}")
-            log(f"❌ ERRO: {e}")
+            st.error(f"❌ Erro técnico: {e}")
+            log(f"❌ EXCEÇÃO: {e}")
             if driver:
                 try:
                     driver.quit()
