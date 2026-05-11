@@ -3,6 +3,9 @@ import os
 import shutil
 import zipfile
 import time
+import re
+import subprocess
+import platform
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.chrome.service import Service
@@ -10,9 +13,6 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
 from webdriver_manager.chrome import ChromeDriverManager
 from webdriver_manager.core.os_manager import ChromeType
-import subprocess
-import platform
-import re
 
 # ─────────────────────────────────────────────
 # CONFIGURAÇÃO DA PÁGINA
@@ -185,7 +185,7 @@ html, body, [data-testid="stAppViewContainer"] {
 st.markdown("""
 <div class="topbar">
     <div class="topbar-brand">MASTER<span>SAF</span> &nbsp;// XML AUTOMATION ENGINE</div>
-    <div class="topbar-meta">v2.4.1 &nbsp;·&nbsp; CT-e RECEPTOR &nbsp;·&nbsp; MÓDULO FISCAL</div>
+    <div class="topbar-meta">v2.5.0 &nbsp;·&nbsp; CT-e RECEPTOR &nbsp;·&nbsp; MÓDULO FISCAL</div>
 </div>
 """, unsafe_allow_html=True)
 
@@ -281,10 +281,24 @@ with right_col:
     """, unsafe_allow_html=True)
 
 # ─────────────────────────────────────────────
-# UTILITY — Find Chrome/Chromium binary and version
+# UTILITY FUNCTIONS
 # ─────────────────────────────────────────────
+
+@st.cache_resource
+def clear_wdm_cache():
+    """Limpa o cache do webdriver-manager para forçar download da versão correta"""
+    wdm_cache = os.path.expanduser("~/.wdm")
+    if os.path.exists(wdm_cache):
+        try:
+            shutil.rmtree(wdm_cache)
+            return True
+        except Exception:
+            return False
+    return True
+
+
 def get_chrome_version(binary_path):
-    """Obtém a versão do Chrome/Chromium"""
+    """Obtém a versão do Chrome/Chromium instalado"""
     try:
         result = subprocess.run(
             [binary_path, "--version"],
@@ -292,32 +306,40 @@ def get_chrome_version(binary_path):
             text=True,
             timeout=5
         )
-        version_match = re.search(r'(\d+\.\d+\.\d+\.\d+)', result.stdout)
+        # Procura por padrão de versão: 148.0.7778.96
+        version_match = re.search(r'(\d+)\.(\d+)\.(\d+)\.(\d+)', result.stdout)
         if version_match:
-            return version_match.group(1)
-    except:
+            return version_match.group(0)
+        # Fallback para formato alternativo: 148
+        version_match = re.search(r'(\d+)', result.stdout)
+        if version_match:
+            return version_match.group(0)
+    except Exception:
         pass
     return None
 
+
 def find_chrome_binary():
-    """Tenta localizar o executável do Chrome/Chromium no sistema"""
+    """Localiza o executável do Chrome/Chromium no sistema"""
+    system = platform.system()
     
-    if platform.system() == "Windows":
+    if system == "Windows":
         possible_paths = [
             "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
             "C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe",
             os.path.expanduser("~\\AppData\\Local\\Google\\Chrome\\Application\\chrome.exe"),
             "C:\\Program Files\\Chromium\\Application\\chrome.exe",
         ]
-    elif platform.system() == "Linux":
+    elif system == "Linux":
         possible_paths = [
             "/usr/bin/google-chrome",
             "/usr/bin/google-chrome-stable",
             "/usr/bin/chromium-browser",
             "/usr/bin/chromium",
             "/snap/bin/chromium",
+            "/usr/lib/chromium/chromium",
         ]
-    elif platform.system() == "Darwin":  # macOS
+    elif system == "Darwin":  # macOS
         possible_paths = [
             "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
             os.path.expanduser("~/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"),
@@ -331,32 +353,43 @@ def find_chrome_binary():
         if os.path.isfile(path):
             return path
     
-    # Tenta encontrar via 'which' no Linux/macOS
-    if platform.system() != "Windows":
-        for browser in ["google-chrome", "chromium-browser", "chromium"]:
+    # Busca usando comandos do sistema
+    if system != "Windows":
+        for browser in ["google-chrome", "google-chrome-stable", "chromium-browser", "chromium"]:
             try:
-                result = subprocess.run(["which", browser], capture_output=True, text=True, timeout=5)
+                result = subprocess.run(
+                    ["which", browser],
+                    capture_output=True,
+                    text=True,
+                    timeout=5
+                )
                 if result.returncode == 0 and result.stdout.strip():
                     return result.stdout.strip()
-            except:
+            except Exception:
                 pass
-    
-    # Tenta encontrar via 'where' no Windows
-    if platform.system() == "Windows":
+    else:
         try:
-            result = subprocess.run(["where", "chrome"], capture_output=True, text=True, timeout=5, shell=True)
+            result = subprocess.run(
+                ["where", "chrome.exe"],
+                capture_output=True,
+                text=True,
+                timeout=5,
+                shell=True
+            )
             if result.returncode == 0 and result.stdout.strip():
-                return result.stdout.strip().split('\n')[0]
-        except:
+                paths = result.stdout.strip().split('\n')
+                return paths[0].strip()
+        except Exception:
             pass
     
     return None
 
-# ─────────────────────────────────────────────
-# DRIVER — Compatível com a versão do Chrome/Chromium
-# ─────────────────────────────────────────────
+
 def get_driver(download_path, chrome_binary=None, chrome_version=None):
+    """Inicializa o ChromeDriver compatível com a versão do browser"""
     chrome_options = Options()
+    
+    # Configurações headless e performance
     chrome_options.add_argument("--headless=new")
     chrome_options.add_argument("--window-size=1920x1080")
     chrome_options.add_argument("--no-sandbox")
@@ -367,41 +400,54 @@ def get_driver(download_path, chrome_binary=None, chrome_version=None):
     chrome_options.add_argument("--disable-infobars")
     chrome_options.add_argument("--js-flags=--expose-gc")
     chrome_options.add_argument("--disable-blink-features=AutomationControlled")
+    chrome_options.add_argument("--remote-debugging-port=0")
     
+    # Preferências de download
     prefs = {
         "download.default_directory": download_path,
         "download.prompt_for_download": False,
         "directory_upgrade": True,
         "safebrowsing.enabled": False,
+        "download.directory_upgrade": True,
+        "plugins.always_open_pdf_externally": True,
     }
     chrome_options.add_experimental_option("prefs", prefs)
     chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
-    chrome_options.add_experimental_option('useAutomationExtension', False)
+    chrome_options.add_experimental_option("useAutomationExtension", False)
     
+    # Define o binário do browser
     if chrome_binary:
         chrome_options.binary_location = chrome_binary
     
-    # Configura o ChromeDriverManager com a versão correta
-    driver_manager = ChromeDriverManager()
+    # Limpa cache antigo do webdriver-manager
+    clear_wdm_cache()
     
+    # Prepara parâmetros para o ChromeDriverManager
+    driver_kwargs = {}
+    
+    # Detecta se é Chromium
+    if chrome_binary and "chromium" in os.path.basename(chrome_binary).lower():
+        driver_kwargs["chrome_type"] = ChromeType.CHROMIUM
+    else:
+        driver_kwargs["chrome_type"] = ChromeType.GOOGLE
+    
+    # Se temos a versão, extrai o major version e configura
     if chrome_version:
-        # Extrai apenas a versão principal (ex: 148 de 148.0.7778.96)
         major_version = chrome_version.split('.')[0]
-        driver_manager.driver_version = major_version
-        
-        # Para Chromium, especifica o tipo
-        if 'chromium' in chrome_binary.lower() if chrome_binary else False:
-            driver_manager.chrome_type = ChromeType.CHROMIUM
+        driver_kwargs["driver_version"] = major_version
     
-    return webdriver.Chrome(
-        service=Service(driver_manager.install()),
-        options=chrome_options
-    )
+    # Instala o driver compatível
+    driver_path = ChromeDriverManager(**driver_kwargs).install()
+    
+    # Cria o serviço e o driver
+    service = Service(driver_path)
+    driver = webdriver.Chrome(service=service, options=chrome_options)
+    
+    return driver
 
-# ─────────────────────────────────────────────
-# HELPER — render terminal log
-# ─────────────────────────────────────────────
+
 def render_log(lines, active=True):
+    """Renderiza o log no estilo terminal"""
     dot_color   = "#c6ff00" if active else "#3a4050"
     status_text = "EM EXECUÇÃO" if active else "CONCLUÍDO"
     rows_html   = "".join(lines)
@@ -421,127 +467,231 @@ def render_log(lines, active=True):
     </div>
     """
 
+
 # ─────────────────────────────────────────────
-# LÓGICA PRINCIPAL
+# LÓGICA PRINCIPAL DE AUTOMAÇÃO
 # ─────────────────────────────────────────────
+
 if iniciar:
+    # Validações iniciais
     if not usuario or not senha:
         with right_col:
             st.error("⚠️  Preencha usuário e senha para continuar.")
     else:
+        # Prepara diretório de downloads
         dl_path = "/tmp/downloads"
         if os.path.exists(dl_path):
             shutil.rmtree(dl_path)
-        os.makedirs(dl_path)
-
+        os.makedirs(dl_path, exist_ok=True)
+        
+        # Inicializa lista de logs
         logs = []
-
+        
         def log(msg, kind="dim"):
-            colors   = {"ok": "#c6ff00", "err": "#e84a2b", "info": "#5b8fff", "dim": "#4a5568"}
-            prefixes = {"ok": "[OK ]",   "err": "[ERR]",   "info": "[INF]",   "dim": "[ — ]"}
-            color    = colors.get(kind, "#4a5568")
-            prefix   = prefixes.get(kind, "[ — ]")
+            """Adiciona mensagem ao log e atualiza o display"""
+            colors   = {
+                "ok": "#c6ff00",
+                "err": "#e84a2b",
+                "info": "#5b8fff",
+                "dim": "#4a5568",
+                "warn": "#f59e0b"
+            }
+            prefixes = {
+                "ok": "[OK ]",
+                "err": "[ERR]",
+                "info": "[INF]",
+                "dim": "[ — ]",
+                "warn": "[WRN]"
+            }
+            color  = colors.get(kind, "#4a5568")
+            prefix = prefixes.get(kind, "[ — ]")
             logs.append(
                 f'<span style="color:{color};">{prefix}</span> '
                 f'<span style="color:#8896a8;">{msg}</span><br>'
             )
             log_placeholder.markdown(render_log(logs), unsafe_allow_html=True)
-
+        
+        driver = None
+        
         try:
-            # Encontra o Chrome/Chromium
+            # ── ETAPA 1: Localizar browser ──
+            log("Procurando Chrome/Chromium no sistema...", "info")
             chrome_binary = find_chrome_binary()
-            if not chrome_binary:
-                raise Exception("Chrome/Chromium não encontrado no sistema. Instale o Chrome ou Chromium.")
             
-            # Obtém a versão
-            chrome_version = get_chrome_version(chrome_binary)
+            if not chrome_binary:
+                raise Exception(
+                    "Chrome/Chromium não encontrado. "
+                    "Instale: sudo apt-get install chromium-browser"
+                )
             
             log(f"Browser encontrado: {chrome_binary}", "info")
+            
+            # ── ETAPA 2: Detectar versão ──
+            chrome_version = get_chrome_version(chrome_binary)
+            
             if chrome_version:
                 log(f"Versão detectada: {chrome_version}", "info")
-                log(f"Baixando ChromeDriver compatível com a versão {chrome_version.split('.')[0]}...", "info")
+            else:
+                log("Não foi possível detectar a versão do browser", "warn")
             
+            # ── ETAPA 3: Inicializar driver ──
+            log("Inicializando ChromeDriver (baixando versão compatível)...", "info")
             driver = get_driver(dl_path, chrome_binary, chrome_version)
-
+            log("ChromeDriver inicializado com sucesso!", "ok")
+            
+            # ── ETAPA 4: Login no MasterSAF ──
             log("Acessando portal MasterSAF...", "info")
             driver.get("https://p.dfe.mastersaf.com.br/mvc/login")
+            time.sleep(3)
+            
+            # Preenche credenciais
             driver.find_element(By.XPATH, '//*[@id="nomeusuario"]').send_keys(usuario)
             driver.find_element(By.XPATH, '//*[@id="senha"]').send_keys(senha)
-            driver.execute_script("arguments[0].click();",
-                driver.find_element(By.XPATH, '//*[@id="enter"]'))
-            time.sleep(4)
+            
+            # Clica no botão Enter
+            driver.execute_script(
+                "arguments[0].click();",
+                driver.find_element(By.XPATH, '//*[@id="enter"]')
+            )
+            time.sleep(5)
             log("Autenticação realizada com sucesso.", "ok")
-
-            log("Navegando até Listagem de CT-es...", "info")
-            driver.execute_script("arguments[0].click();",
-                driver.find_element(By.XPATH, '//*[@id="linkListagemReceptorCTEs"]/a'))
-            time.sleep(3)
-
-            for xpath, val in [
-                ('//*[@id="consultaDataInicial"]', data_ini),
-                ('//*[@id="consultaDataFinal"]',   data_fin),
-            ]:
-                el = driver.find_element(By.XPATH, xpath)
-                el.send_keys(Keys.CONTROL, 'a', Keys.BACKSPACE)
-                el.send_keys(val)
-
-            log(f"Período definido: {data_ini} → {data_fin}", "info")
-            driver.execute_script("arguments[0].click();",
-                driver.find_element(By.XPATH, '//*[@id="listagem_atualiza"]'))
-            time.sleep(3)
-            log("Base de dados atualizada.", "ok")
-
+            
+            # ── ETAPA 5: Navegar para listagem CT-e ──
+            log("Navegando até Listagem de CT-es (Receptor)...", "info")
+            driver.execute_script(
+                "arguments[0].click();",
+                driver.find_element(By.XPATH, '//*[@id="linkListagemReceptorCTEs"]/a')
+            )
+            time.sleep(4)
+            
+            # ── ETAPA 6: Configurar período ──
+            log(f"Configurando período: {data_ini} → {data_fin}", "info")
+            
+            # Data inicial
+            el_ini = driver.find_element(By.XPATH, '//*[@id="consultaDataInicial"]')
+            el_ini.send_keys(Keys.CONTROL, 'a', Keys.BACKSPACE)
+            el_ini.send_keys(data_ini)
+            
+            # Data final
+            el_fin = driver.find_element(By.XPATH, '//*[@id="consultaDataFinal"]')
+            el_fin.send_keys(Keys.CONTROL, 'a', Keys.BACKSPACE)
+            el_fin.send_keys(data_fin)
+            
+            # Atualizar listagem
+            driver.execute_script(
+                "arguments[0].click();",
+                driver.find_element(By.XPATH, '//*[@id="listagem_atualiza"]')
+            )
+            time.sleep(4)
+            log("Base de dados atualizada com o período selecionado.", "ok")
+            
+            # ── ETAPA 7: Selecionar 100 registros por página ──
+            log("Configurando exibição: 100 registros por página...", "info")
             driver.find_element(
                 By.XPATH,
                 '//*[@id="plistagem_center"]/table/tbody/tr/td[8]/select/option[5]'
             ).click()
-            time.sleep(3)
-
-            for i in range(int(qtd_loops)):
-                log(f"Processando página {i+1}/{int(qtd_loops)}...", "dim")
-
-                driver.execute_script("arguments[0].click();",
-                    driver.find_element(By.XPATH, '//*[@id="jqgh_listagem_checkBox"]/div/input'))
-                driver.execute_script("arguments[0].click();",
-                    driver.find_element(By.XPATH, '//*[@id="xml_multiplos"]/h3'))
-                driver.execute_script("arguments[0].click();",
-                    driver.find_element(By.XPATH, '//*[@id="downloadEmMassaXml"]'))
-
+            time.sleep(4)
+            
+            # ── ETAPA 8: Loop de captura ──
+            total_paginas = int(qtd_loops)
+            log(f"Iniciando captura em massa: {total_paginas} página(s)...", "info")
+            
+            for i in range(total_paginas):
+                pagina_atual = i + 1
+                log(f"Processando página {pagina_atual}/{total_paginas}...", "dim")
+                
+                # 1. Selecionar todos os checkboxes
+                driver.execute_script(
+                    "arguments[0].click();",
+                    driver.find_element(
+                        By.XPATH, '//*[@id="jqgh_listagem_checkBox"]/div/input'
+                    )
+                )
+                time.sleep(1)
+                
+                # 2. Abrir menu de download múltiplo
+                driver.execute_script(
+                    "arguments[0].click();",
+                    driver.find_element(By.XPATH, '//*[@id="xml_multiplos"]/h3')
+                )
+                time.sleep(1)
+                
+                # 3. Clicar em "Download em Massa XML"
+                driver.execute_script(
+                    "arguments[0].click();",
+                    driver.find_element(By.XPATH, '//*[@id="downloadEmMassaXml"]')
+                )
+                log(f"Download da página {pagina_atual} iniciado...", "dim")
                 time.sleep(8)
-
-                driver.execute_script("arguments[0].click();",
-                    driver.find_element(By.XPATH, '//*[@id="jqgh_listagem_checkBox"]/div/input'))
-                driver.execute_script("arguments[0].click();",
-                    driver.find_element(By.XPATH, '//*[@id="next_plistagem"]/span'))
-
-                progress_placeholder.progress((i + 1) / int(qtd_loops))
-                log(f"Página {i+1} concluída.", "ok")
-                time.sleep(4)
-
-            log("Compactando arquivos em ZIP...", "info")
+                
+                # 4. Desmarcar todos
+                driver.execute_script(
+                    "arguments[0].click();",
+                    driver.find_element(
+                        By.XPATH, '//*[@id="jqgh_listagem_checkBox"]/div/input'
+                    )
+                )
+                time.sleep(1)
+                
+                # 5. Avançar para próxima página (se não for a última)
+                if pagina_atual < total_paginas:
+                    driver.execute_script(
+                        "arguments[0].click();",
+                        driver.find_element(By.XPATH, '//*[@id="next_plistagem"]/span')
+                    )
+                    time.sleep(3)
+                
+                # Atualizar barra de progresso
+                progress_placeholder.progress(pagina_atual / total_paginas)
+                log(f"Página {pagina_atual} concluída.", "ok")
+                time.sleep(2)
+            
+            # ── ETAPA 9: Compactar arquivos ──
+            log("Compactando arquivos XML em ZIP...", "info")
+            
             zip_filename = "/tmp/resultado.zip"
-            with zipfile.ZipFile(zip_filename, 'w') as zipf:
-                for root, _, files in os.walk(dl_path):
+            total_arquivos = 0
+            
+            with zipfile.ZipFile(zip_filename, 'w', zipfile.ZIP_DEFLATED) as zipf:
+                for root, dirs, files in os.walk(dl_path):
                     for file in files:
-                        zipf.write(os.path.join(root, file), file)
-
+                        file_path = os.path.join(root, file)
+                        zipf.write(file_path, file)
+                        total_arquivos += 1
+            
+            log(f"Compactação concluída: {total_arquivos} arquivo(s).", "ok")
+            
+            # ── ETAPA 10: Finalizar ──
             log("Processo finalizado com sucesso!", "ok")
             log_placeholder.markdown(render_log(logs, active=False), unsafe_allow_html=True)
-
+            
+            # Botão de download
             with open(zip_filename, "rb") as f:
                 download_placeholder.download_button(
-                    "📥  BAIXAR ARQUIVOS XML (.ZIP)",
+                    f"📥  BAIXAR {total_arquivos} ARQUIVOS XML (.ZIP)",
                     f,
                     "XMLs_MasterSaf.zip",
                     "application/zip",
                 )
-
+            
+            # Fechar driver
             driver.quit()
-
+            driver = None
+            
         except Exception as e:
-            log(f"Erro: {e}", "err")
-            if 'driver' in locals():
+            error_msg = str(e)
+            log(f"Erro crítico: {error_msg}", "err")
+            
+            # Sugestões baseadas no erro
+            if "chromedriver" in error_msg.lower() or "chrome" in error_msg.lower():
+                log("Sugestão: Execute 'sudo apt-get update && sudo apt-get install -y chromium-browser'", "warn")
+                log("Depois reinicie o aplicativo Streamlit.", "warn")
+            
+            if 'driver' in locals() and driver is not None:
                 try:
                     driver.quit()
-                except:
+                except Exception:
                     pass
+            
+            log_placeholder.markdown(render_log(logs, active=False), unsafe_allow_html=True)
