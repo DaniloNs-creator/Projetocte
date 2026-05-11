@@ -430,7 +430,7 @@ def processador_txt():
 
 
 # ==============================================================================
-# PARTE 2 — CAPTURA EM MASSA MASTERSAF (REESCRITO - SEM THREAD SESSION STATE)
+# PARTE 2 — CAPTURA EM MASSA MASTERSAF (MODIFICADO PARA LOGS EM TEMPO REAL)
 # ==============================================================================
 
 class XMLProcessor:
@@ -555,164 +555,179 @@ def processar_arquivos_baixados_mastersaf(base_dir, log_list):
     return excel_bytes, num_registros, None
 
 
-def executar_captura_mastersaf(usuario, senha, dt_ini, dt_fin, loops, processar):
-    """
-    Executa a captura em massa MasterSAF e retorna:
-    (logs, excel_bytes, num_registros, error_msg, arquivos_capturados, status_final)
-    """
-    logs = []
-    excel_bytes = None
-    num_registros = 0
-    error_msg = None
-    arquivos_capturados = 0
-    status_final = "done"
+# Classe wrapper para execução em thread com callback de logs
+class MasterSAFThread(threading.Thread):
+    def __init__(self, usuario, senha, dt_ini, dt_fin, loops, processar):
+        super().__init__()
+        self.usuario = usuario
+        self.senha = senha
+        self.dt_ini = dt_ini
+        self.dt_fin = dt_fin
+        self.loops = loops
+        self.processar = processar
+        self.logs = []
+        self.excel_bytes = None
+        self.num_registros = 0
+        self.error_msg = None
+        self.arquivos_capturados = 0
+        self.status_final = "running"
+        self._stop_event = threading.Event()
+        self._lock = threading.Lock()
     
-    def log(msg):
+    def log(self, msg):
         ts = datetime.now().strftime("%H:%M:%S")
-        logs.append(f"[{ts}] {msg}")
+        with self._lock:
+            self.logs.append(f"[{ts}] {msg}")
     
-    driver = None
-    dl_path = "/tmp/downloads"
+    def stop(self):
+        self._stop_event.set()
     
-    try:
-        if os.path.exists(dl_path):
-            shutil.rmtree(dl_path)
-        os.makedirs(dl_path, exist_ok=True)
+    def run(self):
+        driver = None
+        dl_path = "/tmp/downloads"
         
-        # Encontrar Chrome
-        log("Procurando Chrome/Chromium no sistema...")
-        chrome_binary = None
-        possible_paths = [
-            "/usr/bin/chromium", "/usr/bin/google-chrome",
-            "/usr/bin/chromium-browser", "/snap/bin/chromium"
-        ]
-        for path in possible_paths:
-            if os.path.isfile(path):
-                chrome_binary = path
-                break
-        
-        if not chrome_binary:
-            raise Exception("Chrome/Chromium não encontrado. Instale: sudo apt-get install chromium-browser")
-        
-        log(f"Browser encontrado: {chrome_binary}")
-        
-        # Configurar Chrome
-        chrome_options = Options()
-        chrome_options.add_argument("--headless=new")
-        chrome_options.add_argument("--window-size=1920x1080")
-        chrome_options.add_argument("--no-sandbox")
-        chrome_options.add_argument("--disable-dev-shm-usage")
-        chrome_options.add_argument("--disable-gpu")
-        chrome_options.binary_location = chrome_binary
-        
-        prefs = {
-            "download.default_directory": dl_path,
-            "download.prompt_for_download": False,
-            "directory_upgrade": True,
-            "safebrowsing.enabled": False,
-        }
-        chrome_options.add_experimental_option("prefs", prefs)
-        
-        log("Inicializando ChromeDriver...")
-        driver = webdriver.Chrome(options=chrome_options)
-        log("ChromeDriver inicializado com sucesso!")
-        
-        # Login
-        log("Acessando portal MasterSAF...")
-        driver.get("https://p.dfe.mastersaf.com.br/mvc/login")
-        time.sleep(3)
-        
-        driver.find_element(By.XPATH, '//*[@id="nomeusuario"]').send_keys(usuario)
-        driver.find_element(By.XPATH, '//*[@id="senha"]').send_keys(senha)
-        driver.execute_script("arguments[0].click();", driver.find_element(By.XPATH, '//*[@id="enter"]'))
-        time.sleep(5)
-        log("Autenticação realizada com sucesso.")
-        
-        # Navegar
-        log("Navegando até Listagem de CT-es (Receptor)...")
-        driver.execute_script("arguments[0].click();", driver.find_element(By.XPATH, '//*[@id="linkListagemReceptorCTEs"]/a'))
-        time.sleep(4)
-        
-        # Configurar período
-        log(f"Configurando período: {dt_ini} → {dt_fin}")
-        el_ini = driver.find_element(By.XPATH, '//*[@id="consultaDataInicial"]')
-        el_ini.send_keys(Keys.CONTROL, 'a', Keys.BACKSPACE)
-        el_ini.send_keys(dt_ini)
-        el_fin = driver.find_element(By.XPATH, '//*[@id="consultaDataFinal"]')
-        el_fin.send_keys(Keys.CONTROL, 'a', Keys.BACKSPACE)
-        el_fin.send_keys(dt_fin)
-        driver.execute_script("arguments[0].click();", driver.find_element(By.XPATH, '//*[@id="listagem_atualiza"]'))
-        time.sleep(4)
-        log("Base de dados atualizada.")
-        
-        # Selecionar 100 registros
-        log("Configurando exibição: 100 registros por página...")
-        driver.find_element(By.XPATH, '//*[@id="plistagem_center"]/table/tbody/tr/td[8]/select/option[5]').click()
-        time.sleep(4)
-        
-        # Loop de captura
-        total_paginas = int(loops)
-        log(f"Iniciando captura em massa: {total_paginas} página(s)...")
-        
-        for i in range(total_paginas):
-            pagina_atual = i + 1
-            log(f"Processando página {pagina_atual}/{total_paginas}...")
+        try:
+            if os.path.exists(dl_path):
+                shutil.rmtree(dl_path)
+            os.makedirs(dl_path, exist_ok=True)
             
-            # Seleciona todos
-            driver.execute_script("arguments[0].click();", driver.find_element(By.XPATH, '//*[@id="jqgh_listagem_checkBox"]/div/input'))
-            time.sleep(1)
+            # Encontrar Chrome
+            self.log("Procurando Chrome/Chromium no sistema...")
+            chrome_binary = None
+            possible_paths = [
+                "/usr/bin/chromium", "/usr/bin/google-chrome",
+                "/usr/bin/chromium-browser", "/snap/bin/chromium"
+            ]
+            for path in possible_paths:
+                if os.path.isfile(path):
+                    chrome_binary = path                    break
             
-            # Download múltiplo
-            driver.execute_script("arguments[0].click();", driver.find_element(By.XPATH, '//*[@id="xml_multiplos"]/h3'))
-            time.sleep(1)
-            driver.execute_script("arguments[0].click();", driver.find_element(By.XPATH, '//*[@id="downloadEmMassaXml"]'))
-            log(f"Download da página {pagina_atual} iniciado...")
+            if not chrome_binary:
+                raise Exception("Chrome/Chromium não encontrado. Instale: sudo apt-get install chromium-browser")
             
-            esperar_downloads_mastersaf(dl_path)
+            self.log(f"Browser encontrado: {chrome_binary}")
+            
+            # Configurar Chrome
+            chrome_options = Options()
+            chrome_options.add_argument("--headless=new")
+            chrome_options.add_argument("--window-size=1920x1080")
+            chrome_options.add_argument("--no-sandbox")
+            chrome_options.add_argument("--disable-dev-shm-usage")
+            chrome_options.add_argument("--disable-gpu")
+            chrome_options.binary_location = chrome_binary
+            
+            prefs = {
+                "download.default_directory": dl_path,
+                "download.prompt_for_download": False,
+                "directory_upgrade": True,
+                "safebrowsing.enabled": False,
+            }
+            chrome_options.add_experimental_option("prefs", prefs)
+            
+            self.log("Inicializando ChromeDriver...")
+            driver = webdriver.Chrome(options=chrome_options)
+            self.log("ChromeDriver inicializado com sucesso!")
+            
+            # Login
+            self.log("Acessando portal MasterSAF...")
+            driver.get("https://p.dfe.mastersaf.com.br/mvc/login")
+            time.sleep(3)
+            
+            driver.find_element(By.XPATH, '//*[@id="nomeusuario"]').send_keys(self.usuario)
+            driver.find_element(By.XPATH, '//*[@id="senha"]').send_keys(self.senha)
+            driver.execute_script("arguments[0].click();", driver.find_element(By.XPATH, '//*[@id="enter"]'))
             time.sleep(5)
+            self.log("Autenticação realizada com sucesso.")
             
-            # Desmarca
-            driver.execute_script("arguments[0].click();", driver.find_element(By.XPATH, '//*[@id="jqgh_listagem_checkBox"]/div/input'))
-            time.sleep(1)
+            # Navegar
+            self.log("Navegando até Listagem de CT-es (Receptor)...")
+            driver.execute_script("arguments[0].click();", driver.find_element(By.XPATH, '//*[@id="linkListagemReceptorCTEs"]/a'))
+            time.sleep(4)
             
-            # Próxima página
-            if pagina_atual < total_paginas:
-                driver.execute_script("arguments[0].click();", driver.find_element(By.XPATH, '//*[@id="next_plistagem"]/span'))
-                time.sleep(3)
+            # Configurar período
+            self.log(f"Configurando período: {self.dt_ini} → {self.dt_fin}")
+            el_ini = driver.find_element(By.XPATH, '//*[@id="consultaDataInicial"]')
+            el_ini.send_keys(Keys.CONTROL, 'a', Keys.BACKSPACE)
+            el_ini.send_keys(self.dt_ini)
+            el_fin = driver.find_element(By.XPATH, '//*[@id="consultaDataFinal"]')
+            el_fin.send_keys(Keys.CONTROL, 'a', Keys.BACKSPACE)
+            el_fin.send_keys(self.dt_fin)
+            driver.execute_script("arguments[0].click();", driver.find_element(By.XPATH, '//*[@id="listagem_atualiza"]'))
+            time.sleep(4)
+            self.log("Base de dados atualizada.")
             
-            log(f"Página {pagina_atual} concluída.")
-            time.sleep(2)
-        
-        log("Captura finalizada!")
-        
-        # Contar arquivos
-        zip_files = list(Path(dl_path).glob('*.zip'))
-        arquivos_capturados = len(zip_files)
-        
-        # Pós-processamento
-        if processar:
-            excel_bytes, num_registros, err = processar_arquivos_baixados_mastersaf(dl_path, logs)
-            if err:
-                error_msg = err
-                status_final = "done"
-        else:
-            log("⚠ Processamento desativado. Arquivos disponíveis em /tmp/downloads")
-        
-    except Exception as e:
-        import traceback
-        log(f"❌ ERRO CRÍTICO: {str(e)}")
-        log(traceback.format_exc())
-        error_msg = str(e)
-        status_final = "done"
-    finally:
-        if driver is not None:
-            try:
-                driver.quit()
-            except Exception:
-                pass
-        log("Processo finalizado.")
-    
-    return logs, excel_bytes, num_registros, error_msg, arquivos_capturados, status_final
+            # Selecionar 100 registros
+            self.log("Configurando exibição: 100 registros por página...")
+            driver.find_element(By.XPATH, '//*[@id="plistagem_center"]/table/tbody/tr/td[8]/select/option[5]').click()
+            time.sleep(4)
+            
+            # Loop de captura
+            total_paginas = int(self.loops)
+            self.log(f"Iniciando captura em massa: {total_paginas} página(s)...")
+            
+            for i in range(total_paginas):
+                if self._stop_event.is_set():
+                    self.log("⚠ Captura interrompida pelo usuário.")
+                    break
+                    
+                pagina_atual = i + 1
+                self.log(f"Processando página {pagina_atual}/{total_paginas}...")
+                
+                # Seleciona todos
+                driver.execute_script("arguments[0].click();", driver.find_element(By.XPATH, '//*[@id="jqgh_listagem_checkBox"]/div/input'))
+                time.sleep(1)
+                
+                # Download múltiplo
+                driver.execute_script("arguments[0].click();", driver.find_element(By.XPATH, '//*[@id="xml_multiplos"]/h3'))
+                time.sleep(1)
+                driver.execute_script("arguments[0].click();", driver.find_element(By.XPATH, '//*[@id="downloadEmMassaXml"]'))
+                self.log(f"Download da página {pagina_atual} iniciado...")
+                
+                esperar_downloads_mastersaf(dl_path)
+                time.sleep(5)
+                
+                # Desmarca
+                driver.execute_script("arguments[0].click();", driver.find_element(By.XPATH, '//*[@id="jqgh_listagem_checkBox"]/div/input'))
+                time.sleep(1)
+                
+                # Próxima página
+                if pagina_atual < total_paginas:
+                    driver.execute_script("arguments[0].click();", driver.find_element(By.XPATH, '//*[@id="next_plistagem"]/span'))
+                    time.sleep(3)
+                
+                self.log(f"Página {pagina_atual} concluída.")
+                time.sleep(2)
+            
+            self.log("Captura finalizada!")
+            
+            # Contar arquivos
+            zip_files = list(Path(dl_path).glob('*.zip'))
+            self.arquivos_capturados = len(zip_files)
+            
+            # Pós-processamento
+            if self.processar:
+                excel_bytes, num_registros, err = processar_arquivos_baixados_mastersaf(dl_path, self.logs)
+                self.excel_bytes = excel_bytes
+                self.num_registros = num_registros
+                if err:
+                    self.error_msg = err
+            else:
+                self.log("⚠ Processamento desativado. Arquivos disponíveis em /tmp/downloads")
+            
+            self.status_final = "done"
+            
+        except Exception as e:
+            self.log(f"❌ ERRO CRÍTICO: {str(e)}")
+            self.log(traceback.format_exc())
+            self.error_msg = str(e)
+            self.status_final = "done"
+        finally:
+            if driver is not None:
+                try:
+                    driver.quit()
+                except Exception:
+                    pass
+            self.log("Processo finalizado.")
 
 
 def processador_mastersaf():
@@ -723,6 +738,7 @@ def processador_mastersaf():
         'ms_excel_bytes': None, 'ms_xml_count': 0,
         'ms_arquivos_capturados': 0, 'ms_status_final': 'idle',
         'ms_total_paginas': 0, 'ms_resultado_pronto': False,
+        'ms_thread': None,
     }
     for k, v in ms_defaults.items():
         if k not in st.session_state:
@@ -793,7 +809,8 @@ def processador_mastersaf():
         if not st.session_state.ms_running:
             iniciar = st.button("⚡ INICIAR AUTOMAÇÃO", key="ms_iniciar", type="primary")
         else:
-            st.button("⏳ PROCESSANDO...", disabled=True, key="ms_wait")
+            # Botão de parar durante execução
+            st.button("🛑 PARAR AUTOMAÇÃO", key="ms_parar", type="secondary", on_click=lambda: st.session_state.ms_thread.stop() if st.session_state.ms_thread else None)
             iniciar = False
     
     with right_col:
@@ -806,68 +823,187 @@ def processador_mastersaf():
         </div>
         """)
         
-        # Stat cards
-        sc1, sc2, sc3, sc4 = st.columns(4)
+        # Stats placeholder
+        stats_placeholder = st.empty()
         
-        with sc1:
-            ph(f"""
-            <div class="ms-stat-card acid">
-                <div class="ms-stat-label">Págs. Processadas</div>
-                <div class="ms-stat-value acid">{st.session_state.ms_total_paginas:02d}</div>
-            </div>""")
-        with sc2:
-            ph(f"""
-            <div class="ms-stat-card blue-accent">
-                <div class="ms-stat-label">ZIPs Capturados</div>
-                <div class="ms-stat-value blue-accent">{st.session_state.ms_arquivos_capturados:03d}</div>
-            </div>""")
-        with sc3:
-            ph(f"""
-            <div class="ms-stat-card">
-                <div class="ms-stat-label">Registros XML</div>
-                <div class="ms-stat-value">{st.session_state.ms_xml_count:04d}</div>
-            </div>""")
-        with sc4:
-            status_display = "IDLE"
-            if st.session_state.ms_running:
-                status_display = "RUNNING"
-            elif st.session_state.ms_done:
-                status_display = "DONE"
-            ph(f"""
-            <div class="ms-stat-card rust">
-                <div class="ms-stat-label">Status</div>
-                <div class="ms-stat-value rust" style="font-size:0.9rem; padding-top:0.4rem;">{status_display}</div>
-            </div>""")
+        # Alertas placeholder
+        alert_placeholder = st.empty()
         
-        # Alertas
+        # Log console placeholder
+        console_placeholder = st.empty()
+        
+        # Download placeholder
+        download_placeholder = st.empty()
+    
+    # ═══════════════════════════════════════════════════════════════
+    # LÓGICA DE LOGS EM TEMPO REAL - POLLING DA THREAD
+    # ═══════════════════════════════════════════════════════════════
+    
+    if st.session_state.ms_running and not st.session_state.ms_done:
+        # Atualiza os stat cards e console com os logs atuais da thread
+        thread = st.session_state.ms_thread
+        if thread:
+            # Copia os logs atuais com lock
+            with thread._lock:
+                current_logs = list(thread.logs)
+                current_status = thread.status_final
+                current_error = thread.error_msg
+                current_excel = thread.excel_bytes
+                current_xml_count = thread.num_registros
+                current_arquivos = thread.arquivos_capturados
+            
+            # Atualiza stat cards
+            with stats_placeholder.container():
+                sc1, sc2, sc3, sc4 = st.columns(4)
+                with sc1:
+                    ph(f"""
+                    <div class="ms-stat-card acid">
+                        <div class="ms-stat-label">Págs. Processadas</div>
+                        <div class="ms-stat-value acid">{int(qtd_loops):02d}</div>
+                    </div>""")
+                with sc2:
+                    ph(f"""
+                    <div class="ms-stat-card blue-accent">
+                        <div class="ms-stat-label">ZIPs Capturados</div>
+                        <div class="ms-stat-value blue-accent">{current_arquivos:03d}</div>
+                    </div>""")
+                with sc3:
+                    ph(f"""
+                    <div class="ms-stat-card">
+                        <div class="ms-stat-label">Registros XML</div>
+                        <div class="ms-stat-value">{current_xml_count:04d}</div>
+                    </div>""")
+                with sc4:
+                    status_display = "RUNNING" if current_status == "running" else "DONE"
+                    ph(f"""
+                    <div class="ms-stat-card rust">
+                        <div class="ms-stat-label">Status</div>
+                        <div class="ms-stat-value rust" style="font-size:0.9rem; padding-top:0.4rem;">{status_display}</div>
+                    </div>""")
+            
+            # Atualiza alertas
+            with alert_placeholder.container():
+                if current_error:
+                    st.error(f"❌ {current_error}")
+                elif current_status == "done" and current_excel:
+                    st.success(f"✅ Captura concluída! {current_xml_count} registros extraídos.")
+                elif current_status == "done":
+                    st.info(f"Captura finalizada. {current_xml_count} registros.")
+                else:
+                    st.info("⏳ Automação em andamento...")
+            
+            # Atualiza console
+            with console_placeholder.container():
+                log_text = "\n".join(current_logs[-80:]) if current_logs else "[ — ] Aguardando início..."
+                ph(f'<div class="ms-console">{log_text}</div>')
+            
+            # Verifica se terminou
+            if current_status == "done":
+                # Atualiza session state com resultados finais
+                st.session_state.ms_logs = current_logs
+                st.session_state.ms_excel_bytes = current_excel
+                st.session_state.ms_xml_count = current_xml_count
+                st.session_state.ms_error_msg = current_error or ''
+                st.session_state.ms_arquivos_capturados = current_arquivos
+                st.session_state.ms_total_paginas = int(qtd_loops)
+                st.session_state.ms_done = True
+                st.session_state.ms_running = False
+                st.session_state.ms_status_final = "done"
+                
+                # Download
+                if current_excel:
+                    with download_placeholder.container():
+                        st.markdown("---")
+                        periodo = f"{data_ini.replace('/','_')}_a_{data_fin.replace('/','_')}"
+                        st.download_button(
+                            label=f"📥  BAIXAR EXCEL CONSOLIDADO — {current_xml_count} registro(s)",
+                            data=current_excel,
+                            file_name=f"MasterSAF_Captura_{periodo}.xlsx",
+                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                            key="ms_download"
+                        )
+                
+                time.sleep(1)
+                st.rerun()
+            else:
+                # Ainda rodando - faz polling
+                time.sleep(1)
+                st.rerun()
+        else:
+            # Thread não existe mais (erro?)
+            with console_placeholder.container():
+                ph('<div class="ms-console">[ — ] Thread não encontrada. Reinicie o processo.</div>')
+            time.sleep(1)
+            st.rerun()
+    
+    # Estado inicial ou após conclusão (sem thread rodando)
+    if not st.session_state.ms_running:
+        # Exibe stats finais ou zerados
+        with stats_placeholder.container():
+            sc1, sc2, sc3, sc4 = st.columns(4)
+            with sc1:
+                ph(f"""
+                <div class="ms-stat-card acid">
+                    <div class="ms-stat-label">Págs. Processadas</div>
+                    <div class="ms-stat-value acid">{st.session_state.ms_total_paginas:02d}</div>
+                </div>""")
+            with sc2:
+                ph(f"""
+                <div class="ms-stat-card blue-accent">
+                    <div class="ms-stat-label">ZIPs Capturados</div>
+                    <div class="ms-stat-value blue-accent">{st.session_state.ms_arquivos_capturados:03d}</div>
+                </div>""")
+            with sc3:
+                ph(f"""
+                <div class="ms-stat-card">
+                    <div class="ms-stat-label">Registros XML</div>
+                    <div class="ms-stat-value">{st.session_state.ms_xml_count:04d}</div>
+                </div>""")
+            with sc4:
+                status_display = "IDLE"
+                if st.session_state.ms_done:
+                    status_display = "DONE"
+                ph(f"""
+                <div class="ms-stat-card rust">
+                    <div class="ms-stat-label">Status</div>
+                    <div class="ms-stat-value rust" style="font-size:0.9rem; padding-top:0.4rem;">{status_display}</div>
+                </div>""")
+        
+        # Exibe alertas
         if st.session_state.ms_error_msg:
-            st.error(f"❌ {st.session_state.ms_error_msg}")
+            with alert_placeholder.container():
+                st.error(f"❌ {st.session_state.ms_error_msg}")
         elif st.session_state.ms_done and st.session_state.ms_excel_bytes:
-            st.success(f"✅ Captura concluída! {st.session_state.ms_xml_count} registros extraídos.")
+            with alert_placeholder.container():
+                st.success(f"✅ Captura concluída! {st.session_state.ms_xml_count} registros extraídos.")
         elif st.session_state.ms_done:
-            st.info(f"Captura finalizada. {st.session_state.ms_xml_count} registros.")
+            with alert_placeholder.container():
+                st.info(f"Captura finalizada. {st.session_state.ms_xml_count} registros.")
         
-        # Log console
-        log_text = "\n".join(st.session_state.ms_logs[-80:]) if st.session_state.ms_logs else "[ — ] Sistema pronto. Configure as credenciais e clique em iniciar.\n[ — ] Chrome/Selenium em standby.\n[ — ] Diretório de saída: /tmp/downloads"
-        ph(f'<div class="ms-console">{log_text}</div>')
+        # Exibe console
+        with console_placeholder.container():
+            log_text = "\n".join(st.session_state.ms_logs[-80:]) if st.session_state.ms_logs else "[ — ] Sistema pronto. Configure as credenciais e clique em iniciar.\n[ — ] Chrome/Selenium em standby.\n[ — ] Diretório de saída: /tmp/downloads"
+            ph(f'<div class="ms-console">{log_text}</div>')
         
-        # Download Excel
+        # Download se existir
         if st.session_state.ms_done and st.session_state.ms_excel_bytes:
-            st.markdown("---")
-            periodo = f"{data_ini.replace('/','_')}_a_{data_fin.replace('/','_')}"
-            st.download_button(
-                label=f"📥  BAIXAR EXCEL CONSOLIDADO — {st.session_state.ms_xml_count} registro(s)",
-                data=st.session_state.ms_excel_bytes,
-                file_name=f"MasterSAF_Captura_{periodo}.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                key="ms_download"
-            )
+            with download_placeholder.container():
+                st.markdown("---")
+                periodo = f"{data_ini.replace('/','_')}_a_{data_fin.replace('/','_')}"
+                st.download_button(
+                    label=f"📥  BAIXAR EXCEL CONSOLIDADO — {st.session_state.ms_xml_count} registro(s)",
+                    data=st.session_state.ms_excel_bytes,
+                    file_name=f"MasterSAF_Captura_{periodo}.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    key="ms_download"
+                )
     
     # Disparo da execução
     if iniciar:
         if not usuario or not senha:
             st.error("⚠️ Preencha usuário e senha para continuar.")
         else:
+            # Resetar state
             st.session_state.ms_running = True
             st.session_state.ms_done = False
             st.session_state.ms_error_msg = ''
@@ -876,30 +1012,16 @@ def processador_mastersaf():
             st.session_state.ms_xml_count = 0
             st.session_state.ms_arquivos_capturados = 0
             st.session_state.ms_total_paginas = 0
+            st.session_state.ms_status_final = "running"
+            
+            # Criar e iniciar thread
+            thread = MasterSAFThread(usuario, senha, data_ini, data_fin, int(qtd_loops), processar_xml)
+            thread.start()
+            st.session_state.ms_thread = thread
+            
+            # Primeiro rerun para iniciar o loop de polling
+            time.sleep(0.5)
             st.rerun()
-    
-    # Execução em andamento
-    if st.session_state.ms_running and not st.session_state.ms_done:
-        status_placeholder = st.empty()
-        status_placeholder.info("⏳ Executando captura em massa...")
-        
-        # Executa a captura diretamente (bloqueante, mas com rerun)
-        logs, excel_bytes, num_registros, error_msg, arquivos_capturados, status_final = executar_captura_mastersaf(
-            usuario, senha, data_ini, data_fin, int(qtd_loops), processar_xml
-        )
-        
-        # Atualiza session state com os resultados
-        st.session_state.ms_logs = logs
-        st.session_state.ms_excel_bytes = excel_bytes
-        st.session_state.ms_xml_count = num_registros
-        st.session_state.ms_error_msg = error_msg if error_msg else ''
-        st.session_state.ms_arquivos_capturados = arquivos_capturados
-        st.session_state.ms_total_paginas = int(qtd_loops)
-        st.session_state.ms_done = True
-        st.session_state.ms_running = False
-        
-        status_placeholder.empty()
-        st.rerun()
 
 
 # ==============================================================================
