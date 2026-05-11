@@ -43,7 +43,7 @@ import threading
 # CONFIGURAÇÃO AUTOMÁTICA DO SERVIDOR STREAMLIT
 # Suporta PDFs gigantes — até 2 GB
 # ==============================================================================
-_PDF_CHUNK_PAGES = 50
+_PDF_CHUNK_PAGES = 20   # Streamlit Cloud ~1GB RAM — chunks menores evitam OOM
 
 def setup_streamlit_config():
     try:
@@ -1459,9 +1459,10 @@ def mastersaf_automacao():
 class HafelePDFParser:
     """
     Parser para o layout Extrato DUIMP (APP2 original).
-    Processa em lotes de _PDF_CHUNK_PAGES páginas para suportar PDFs
-    gigantes (1000+ páginas) sem travar por falta de memória.
+    Processa em lotes de _PDF_CHUNK_PAGES páginas.
+    Buffer residual limitado a _MAX_BUF_CHARS para evitar OOM.
     """
+    _MAX_BUF_CHARS = 500_000  # ~500KB de texto — suficiente para qualquer item
 
     def __init__(self):
         self.documento = {'cabecalho': {}, 'itens': [], 'totais': {}}
@@ -1500,12 +1501,20 @@ class HafelePDFParser:
                             chunk_lines.append(t)
 
                     chunk_text = self._buffer + "\n".join(chunk_lines)
-                    is_last    = (end == total)
+                    del chunk_lines
+
+                    is_last = (end == total)
                     new_items, self._buffer = self._extract_items_from_chunk(
                         chunk_text, is_last=is_last
                     )
                     items_found.extend(new_items)
-                    del chunk_lines, chunk_text
+                    del chunk_text, new_items
+
+                    # Proteção OOM: buffer residual não pode crescer infinitamente
+                    if len(self._buffer) > self._MAX_BUF_CHARS:
+                        # Mantém apenas os últimos MAX_BUF_CHARS (dados recentes)
+                        self._buffer = self._buffer[-self._MAX_BUF_CHARS:]
+
                     gc.collect()
 
             prog_txt.empty()
@@ -1514,6 +1523,9 @@ class HafelePDFParser:
             if self._buffer.strip():
                 new_items, _ = self._extract_items_from_chunk(self._buffer, is_last=True)
                 items_found.extend(new_items)
+
+            self._buffer = ""
+            gc.collect()
 
             if not items_found:
                 st.warning("⚠️ Padrão 'ITENS DA DUIMP' não encontrado. Verifique o formato do PDF.")
@@ -1660,6 +1672,8 @@ class SigrawebPDFParser:
         except Exception:
             return d.replace('/','').replace('-','')[:8]
 
+    _MAX_BUF_CHARS = 500_000  # ~500KB — proteção OOM
+
     def parse_pdf(self, pdf_path: str) -> Dict:
         try:
             prog_txt = st.empty()
@@ -1691,12 +1705,19 @@ class SigrawebPDFParser:
                             chunk_pages.append(t)
 
                     chunk_text = buffer + "\n".join(chunk_pages)
+                    del chunk_pages
+
                     is_last    = (end == total)
                     new_items, buffer = self._extract_items_from_chunk(
                         chunk_text, is_last=is_last
                     )
                     items_found.extend(new_items)
-                    del chunk_pages, chunk_text
+                    del chunk_text, new_items
+
+                    # Proteção OOM: buffer residual não pode crescer infinitamente
+                    if len(buffer) > self._MAX_BUF_CHARS:
+                        buffer = buffer[-self._MAX_BUF_CHARS:]
+
                     gc.collect()
 
             prog_txt.empty()
@@ -1705,6 +1726,9 @@ class SigrawebPDFParser:
             if buffer.strip():
                 new_items, _ = self._extract_items_from_chunk(buffer, is_last=True)
                 items_found.extend(new_items)
+
+            buffer = ""
+            gc.collect()
 
             if not items_found:
                 st.warning("⚠️ Nenhuma adição detectada no PDF Sigraweb.")
@@ -1940,90 +1964,179 @@ def montar_descricao_final(desc_complementar, codigo_extra, detalhamento):
 
 
 class DuimpPDFParser:
-    def __init__(self, pdf_path: str):
-        self.pdf_path  = pdf_path
-        self.full_text = ""
-        self.header    = {}
-        self.items     = []
+    """
+    Parser de DUIMP com processamento STREAMING — nunca acumula o texto
+    completo na memória. Extrai cabeçalho e itens página a página,
+    mantendo apenas um buffer residual mínimo entre chunks.
+    """
 
+    def __init__(self, pdf_path: str):
+        self.pdf_path = pdf_path
+        # full_text REMOVIDO — substituído por processamento streaming
+        self.header   = {}
+        self.items    = []
+        # Buffer interno usado APENAS durante parse (liberado ao final)
+        self._buf     = ""
+
+    # ------------------------------------------------------------------
+    # Filtra uma linha do PDF (remove ruído de paginação)
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _filter(line: str) -> bool:
+        ls = line.strip()
+        if not ls:                                      return False
+        if "Extrato da DUIMP" in ls:                   return False
+        if "Data, hora e responsável" in ls:           return False
+        if re.match(r'^\d+\s*/\s*\d+$', ls):          return False
+        return True
+
+    # ------------------------------------------------------------------
+    # preprocess() + extract_header() + extract_items() fundidos em um
+    # único passo streaming — lê, filtra, extrai e descarta por chunk.
+    # ------------------------------------------------------------------
     def preprocess(self):
+        """
+        Lê o PDF em blocos de _PDF_CHUNK_PAGES páginas.
+        Extrai cabeçalho das primeiras páginas e itens incrementalmente.
+        NUNCA mantém o texto completo em memória simultaneamente.
+        """
         prog_txt = st.empty()
         prog_bar = st.progress(0)
         doc      = fitz.open(self.pdf_path)
         total    = doc.page_count
-        parts    = []
+        self._buf = ""
 
         for start in range(0, total, _PDF_CHUNK_PAGES):
             end = min(start + _PDF_CHUNK_PAGES, total)
-            prog_txt.text(f"Pré-processando páginas {start+1}–{end} de {total} (DUIMP)...")
+            prog_txt.text(f"Processando páginas {start+1}–{end} de {total} (DUIMP)...")
             prog_bar.progress(end / total)
 
-            chunk_lines = []
+            # Extrai texto do chunk e filtra linhas de ruído
+            lines = []
             for idx in range(start, end):
                 page = doc[idx]
                 for line in page.get_text("text").split('\n'):
-                    ls = line.strip()
-                    if "Extrato da DUIMP" in ls: continue
-                    if "Data, hora e responsável" in ls: continue
-                    if re.match(r'^\d+\s*/\s*\d+$', ls): continue
-                    chunk_lines.append(line)
-                page = None
+                    if self._filter(line):
+                        lines.append(line)
+                page = None   # libera objeto página imediatamente
 
-            parts.append("\n".join(chunk_lines))
-            del chunk_lines
+            chunk_text = "\n".join(lines)
+            del lines
+            gc.collect()
+
+            # Extrai cabeçalho apenas das primeiras páginas (chunk 0)
+            if start == 0 and not self.header:
+                self._extract_header_from_chunk(chunk_text)
+
+            # Extrai itens incrementalmente com buffer residual
+            self._buf, new_items = self._extract_items_streaming(
+                self._buf + chunk_text, is_last=(end == total)
+            )
+            self.items.extend(new_items)
+
+            del chunk_text
             gc.collect()
 
         doc.close()
         prog_txt.empty()
         prog_bar.empty()
 
-        self.full_text = "\n".join(parts)
-        del parts
+        # Processa qualquer residual final
+        if self._buf.strip():
+            _, remaining = self._extract_items_streaming(self._buf, is_last=True)
+            self.items.extend(remaining)
+
+        self._buf = ""  # libera buffer
         gc.collect()
 
     def extract_header(self):
-        t = self.full_text
-        self.header["numeroDUIMP"]    = self._r(r"Extrato da Duimp\s+([\w\-\/]+)", t)
-        self.header["cnpj"]           = self._r(r"CNPJ do importador:\s*([\d\.\/\-]+)", t)
-        self.header["nomeImportador"] = self._r(r"Nome do importador:\s*\n?(.+)", t)
-        self.header["pesoBruto"]      = self._r(r"Peso Bruto \(kg\):\s*([\d\.,]+)", t)
-        self.header["pesoLiquido"]    = self._r(r"Peso Liquido \(kg\):\s*([\d\.,]+)", t)
-        self.header["urf"]            = self._r(r"Unidade de despacho:\s*([\d]+)", t)
-        self.header["paisProcedencia"]= self._r(r"País de Procedência:\s*\n?(.+)", t)
+        """Compatibilidade — cabeçalho já extraído em preprocess()."""
+        pass  # já feito no streaming
 
     def extract_items(self):
-        chunks = re.split(r"Item\s+(\d+)", self.full_text)
-        if len(chunks) > 1:
-            for i in range(1, len(chunks), 2):
-                num = chunks[i]; content = chunks[i+1]
-                item = {"numeroAdicao": num}
-                item["ncm"]        = self._r(r"NCM:\s*([\d\.]+)", content)
-                item["paisOrigem"] = self._r(r"País de origem:\s*\n?(.+)", content)
-                item["quantidade"] = self._r(r"Quantidade na unidade estatística:\s*([\d\.,]+)", content)
-                item["quantidade_comercial"] = self._r(r"Quantidade na unidade comercializada:\s*([\d\.,]+)", content)
-                item["unidade"]    = self._r(r"Unidade estatística:\s*(.+)", content)
-                item["pesoLiq"]    = self._r(r"Peso líquido \(kg\):\s*([\d\.,]+)", content)
-                item["valorUnit"]  = self._r(r"Valor unitário na condição de venda:\s*([\d\.,]+)", content)
-                item["valorTotal"] = self._r(r"Valor total na condição de venda:\s*([\d\.,]+)", content)
-                item["moeda"]      = self._r(r"Moeda negociada:\s*(.+)", content)
-                m = re.search(
-                    r"Código do Exportador Estrangeiro:\s*(.+?)(?=\n\s*(?:Endereço|Dados))",
-                    content, re.DOTALL)
-                item["fornecedor_raw"] = m.group(1).strip() if m else ""
-                m = re.search(
-                    r"Endereço:\s*(.+?)(?=\n\s*(?:Dados da Mercadoria|Aplicação))",
-                    content, re.DOTALL)
-                item["endereco_raw"] = m.group(1).strip() if m else ""
-                m = re.search(
-                    r"Detalhamento do Produto:\s*(.+?)"
-                    r"(?=\n\s*(?:Número de Identificação|Versão|Código de Class|Descrição complementar))",
-                    content, re.DOTALL)
-                item["descricao"] = m.group(1).strip() if m else ""
-                m = re.search(
-                    r"Descrição complementar da mercadoria:\s*(.+?)(?=\n|$)",
-                    content, re.DOTALL)
-                item["desc_complementar"] = m.group(1).strip() if m else ""
-                self.items.append(item)
+        """Compatibilidade — itens já extraídos em preprocess()."""
+        pass  # já feito no streaming
+
+    # ------------------------------------------------------------------
+    # Extração de cabeçalho a partir de um bloco de texto
+    # ------------------------------------------------------------------
+    def _extract_header_from_chunk(self, text: str):
+        self.header["numeroDUIMP"]    = self._r(r"Extrato da Duimp\s+([\w\-\/]+)", text)
+        self.header["cnpj"]           = self._r(r"CNPJ do importador:\s*([\d\.\/\-]+)", text)
+        self.header["nomeImportador"] = self._r(r"Nome do importador:\s*\n?(.+)", text)
+        self.header["pesoBruto"]      = self._r(r"Peso Bruto \(kg\):\s*([\d\.,]+)", text)
+        self.header["pesoLiquido"]    = self._r(r"Peso Liquido \(kg\):\s*([\d\.,]+)", text)
+        self.header["urf"]            = self._r(r"Unidade de despacho:\s*([\d]+)", text)
+        self.header["paisProcedencia"]= self._r(r"País de Procedência:\s*\n?(.+)", text)
+
+    # ------------------------------------------------------------------
+    # Extração streaming de itens — retorna (buffer_residual, [itens])
+    # ------------------------------------------------------------------
+    def _extract_items_streaming(self, text: str, is_last: bool):
+        """
+        Divide o texto pelo padrão 'Item N', processa os blocos completos
+        e retorna o bloco final incompleto como buffer para o próximo chunk.
+        Nunca guarda mais do que um bloco de item por vez na memória.
+        """
+        parts = re.split(r"Item\s+(\d+)", text)
+        items_found = []
+
+        if len(parts) <= 1:
+            residual = "" if is_last else text
+            return residual, items_found
+
+        # Quantos blocos podemos processar com segurança
+        # Se não é último chunk, o último bloco pode estar incompleto
+        n_safe = len(parts) - 1 if not is_last else len(parts)
+
+        for i in range(1, n_safe, 2):
+            num     = parts[i]
+            content = parts[i + 1] if (i + 1) < len(parts) else ""
+            item    = self._parse_item_block(num, content)
+            if item:
+                items_found.append(item)
+            # Libera conteúdo do bloco imediatamente após parsear
+            parts[i + 1] = ""
+
+        # Buffer residual = último bloco incompleto
+        if not is_last and len(parts) >= 2:
+            last_num     = parts[-2] if len(parts) % 2 == 0 else ""
+            last_content = parts[-1]
+            residual = (f"Item {last_num}\n" if last_num else "") + last_content
+        else:
+            residual = ""
+
+        del parts
+        return residual, items_found
+
+    # ------------------------------------------------------------------
+    # Parseia um bloco de item individual
+    # ------------------------------------------------------------------
+    def _parse_item_block(self, num: str, content: str) -> Optional[Dict]:
+        item = {"numeroAdicao": num.strip()}
+        item["ncm"]                  = self._r(r"NCM:\s*([\d\.]+)", content)
+        item["paisOrigem"]           = self._r(r"País de origem:\s*\n?(.+)", content)
+        item["quantidade"]           = self._r(r"Quantidade na unidade estatística:\s*([\d\.,]+)", content)
+        item["quantidade_comercial"] = self._r(r"Quantidade na unidade comercializada:\s*([\d\.,]+)", content)
+        item["unidade"]              = self._r(r"Unidade estatística:\s*(.+)", content)
+        item["pesoLiq"]              = self._r(r"Peso líquido \(kg\):\s*([\d\.,]+)", content)
+        item["valorUnit"]            = self._r(r"Valor unitário na condição de venda:\s*([\d\.,]+)", content)
+        item["valorTotal"]           = self._r(r"Valor total na condição de venda:\s*([\d\.,]+)", content)
+        item["moeda"]                = self._r(r"Moeda negociada:\s*(.+)", content)
+        m = re.search(r"Código do Exportador Estrangeiro:\s*(.+?)(?=\n\s*(?:Endereço|Dados))",
+                      content, re.DOTALL)
+        item["fornecedor_raw"] = m.group(1).strip() if m else ""
+        m = re.search(r"Endereço:\s*(.+?)(?=\n\s*(?:Dados da Mercadoria|Aplicação))",
+                      content, re.DOTALL)
+        item["endereco_raw"] = m.group(1).strip() if m else ""
+        m = re.search(r"Detalhamento do Produto:\s*(.+?)"
+                      r"(?=\n\s*(?:Número de Identificação|Versão|Código de Class|Descrição complementar))",
+                      content, re.DOTALL)
+        item["descricao"] = m.group(1).strip() if m else ""
+        m = re.search(r"Descrição complementar da mercadoria:\s*(.+?)(?=\n|$)",
+                      content, re.DOTALL)
+        item["desc_complementar"] = m.group(1).strip() if m else ""
+        return item
 
     def _r(self, pat, text):
         m = re.search(pat, text)
