@@ -6,6 +6,11 @@ import time
 import re
 import subprocess
 import platform
+import tempfile
+from pathlib import Path
+import xml.etree.ElementTree as ET
+import pandas as pd
+from datetime import datetime
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.chrome.service import Service
@@ -63,21 +68,10 @@ html, body, [data-testid="stAppViewContainer"], .stApp {
     max-width: 100% !important;
 }
 
-/* ── SCROLLBAR ── */
-::-webkit-scrollbar {
-    width: 4px;
-    height: 4px;
-}
-::-webkit-scrollbar-track {
-    background: var(--bg-secondary);
-}
-::-webkit-scrollbar-thumb {
-    background: var(--border-secondary);
-    border-radius: 0;
-}
-::-webkit-scrollbar-thumb:hover {
-    background: var(--text-muted);
-}
+::-webkit-scrollbar { width: 4px; height: 4px; }
+::-webkit-scrollbar-track { background: var(--bg-secondary); }
+::-webkit-scrollbar-thumb { background: var(--border-secondary); border-radius: 0; }
+::-webkit-scrollbar-thumb:hover { background: var(--text-muted); }
 
 /* ── TOP BAR ── */
 .topbar {
@@ -105,9 +99,7 @@ html, body, [data-testid="stAppViewContainer"], .stApp {
 }
 
 /* ── PROGRESS BAR ── */
-[data-testid="stProgress"] {
-    background: transparent !important;
-}
+[data-testid="stProgress"] { background: transparent !important; }
 [data-testid="stProgress"] > div {
     background: var(--bg-tertiary) !important;
     border: 1px solid var(--border-secondary) !important;
@@ -152,7 +144,7 @@ html, body, [data-testid="stAppViewContainer"], .stApp {
     color: var(--text-muted) !important;
 }
 
-/* ── SIDEBAR (hidden) ── */
+/* ── SIDEBAR ── */
 [data-testid="stSidebar"] { display: none !important; }
 
 /* ── MAIN BUTTON ── */
@@ -177,9 +169,7 @@ html, body, [data-testid="stAppViewContainer"], .stApp {
     transform: translateY(-1px) !important;
     box-shadow: 0 4px 12px rgba(198, 255, 0, 0.15) !important;
 }
-.stButton button:active {
-    transform: translateY(0) !important;
-}
+.stButton button:active { transform: translateY(0) !important; }
 
 /* ── DOWNLOAD BUTTON ── */
 .stDownloadButton button {
@@ -202,7 +192,7 @@ html, body, [data-testid="stAppViewContainer"], .stApp {
     box-shadow: 0 4px 12px rgba(198, 255, 0, 0.15) !important;
 }
 
-/* ── ALERTS / MESSAGES ── */
+/* ── ALERTS ── */
 [data-testid="stAlert"] {
     border-radius: 0 !important;
     font-family: 'IBM Plex Mono', monospace !important;
@@ -213,7 +203,6 @@ html, body, [data-testid="stAppViewContainer"], .stApp {
     color: var(--text-primary) !important;
 }
 
-/* ── ERROR MESSAGE ── */
 .stException {
     background: var(--bg-tertiary) !important;
     border: 1px solid var(--rust) !important;
@@ -234,33 +223,7 @@ html, body, [data-testid="stAppViewContainer"], .stApp {
     color: var(--text-primary) !important;
 }
 
-/* ── EXPANDER ── */
-[data-testid="stExpander"] {
-    background: var(--bg-secondary) !important;
-    border: 1px solid var(--border-primary) !important;
-    border-radius: 0 !important;
-}
-[data-testid="stExpander"] details summary {
-    color: var(--text-primary) !important;
-    font-family: 'IBM Plex Mono', monospace !important;
-}
-
-/* ── RADIO / CHECKBOX ── */
-[data-testid="stRadio"] label,
-[data-testid="stCheckbox"] label {
-    color: var(--text-primary) !important;
-}
-
-/* ── SELECT BOX ── */
-[data-testid="stSelectbox"] select {
-    background: var(--bg-input) !important;
-    border: 1px solid var(--border-primary) !important;
-    border-radius: 0 !important;
-    color: var(--text-primary) !important;
-    font-family: 'IBM Plex Mono', monospace !important;
-}
-
-/* ── DATAFRAME / TABLE ── */
+/* ── TABLES ── */
 [data-testid="stTable"] {
     background: var(--bg-secondary) !important;
     border: 1px solid var(--border-primary) !important;
@@ -278,16 +241,7 @@ html, body, [data-testid="stAppViewContainer"], .stApp {
     border-bottom: 1px solid var(--border-primary) !important;
 }
 
-/* ── TOOLTIP ── */
-[data-testid="stTooltip"] {
-    background: var(--bg-tertiary) !important;
-    border: 1px solid var(--border-secondary) !important;
-    border-radius: 0 !important;
-    color: var(--text-primary) !important;
-    font-family: 'IBM Plex Mono', monospace !important;
-}
-
-/* ── MARKDOWN CODE ── */
+/* ── CODE ── */
 code {
     background: var(--bg-tertiary) !important;
     color: var(--acid) !important;
@@ -297,13 +251,30 @@ code {
     padding: 0.2rem 0.5rem !important;
 }
 
-/* ── LINKS ── */
-a {
-    color: var(--acid) !important;
-    text-decoration: none !important;
+a { color: var(--acid) !important; text-decoration: none !important; }
+a:hover { text-decoration: underline !important; }
+
+/* ── CHECKBOX ── */
+[data-testid="stCheckbox"] label {
+    color: var(--text-primary) !important;
+    font-family: 'IBM Plex Mono', monospace !important;
+    font-size: 0.72rem !important;
 }
-a:hover {
-    text-decoration: underline !important;
+
+/* ── METRIC ── */
+[data-testid="stMetric"] {
+    background: var(--bg-secondary) !important;
+    border: 1px solid var(--border-primary) !important;
+    padding: 1rem !important;
+    border-radius: 0 !important;
+}
+[data-testid="stMetric"] label {
+    color: var(--text-muted) !important;
+    font-family: 'IBM Plex Mono', monospace !important;
+}
+[data-testid="stMetric"] [data-testid="stMetricValue"] {
+    color: var(--acid) !important;
+    font-family: 'IBM Plex Mono', monospace !important;
 }
 </style>
 """, unsafe_allow_html=True)
@@ -314,7 +285,7 @@ a:hover {
 st.markdown("""
 <div class="topbar">
     <div class="topbar-brand">MASTER<span>SAF</span> &nbsp;// XML AUTOMATION ENGINE</div>
-    <div class="topbar-meta">v2.5.0 &nbsp;·&nbsp; CT-e RECEPTOR &nbsp;·&nbsp; MÓDULO FISCAL</div>
+    <div class="topbar-meta">v3.0.0 &nbsp;·&nbsp; CT-e RECEPTOR &nbsp;·&nbsp; MÓDULO FISCAL</div>
 </div>
 """, unsafe_allow_html=True)
 
@@ -353,6 +324,11 @@ with left_col:
     st.markdown('<div style="font-family:\'IBM Plex Mono\',monospace; font-size:0.58rem; letter-spacing:0.2em; text-transform:uppercase; color:#5a5e66; margin-bottom:0.5rem;">Parâmetros</div>', unsafe_allow_html=True)
 
     qtd_loops = st.number_input("Qtd. Páginas (Loops)", min_value=1, max_value=1000, value=5)
+
+    st.markdown('<hr style="border:none; border-top:1px solid #1f2329; margin:1.2rem 0 0.8rem;">', unsafe_allow_html=True)
+    st.markdown('<div style="font-family:\'IBM Plex Mono\',monospace; font-size:0.58rem; letter-spacing:0.2em; text-transform:uppercase; color:#5a5e66; margin-bottom:0.5rem;">Pós-Processamento</div>', unsafe_allow_html=True)
+
+    processar_xml = st.checkbox("Extrair ZIPs e processar XMLs para Excel", value=True, key="processar")
 
     st.markdown("<br>", unsafe_allow_html=True)
     iniciar = st.button("⚡ INICIAR AUTOMAÇÃO")
@@ -394,6 +370,7 @@ with right_col:
     log_placeholder      = st.empty()
     progress_placeholder = st.empty()
     download_placeholder = st.empty()
+    excel_placeholder    = st.empty()
 
     log_placeholder.markdown("""
     <div style="background:#0d0f14; border:1px solid #1f2329; border-top:2px solid #c6ff00; padding:1.2rem 1.5rem; min-height:200px;">
@@ -410,12 +387,202 @@ with right_col:
     """, unsafe_allow_html=True)
 
 # ─────────────────────────────────────────────
+# CT-e PROCESSOR
+# ─────────────────────────────────────────────
+
+CTE_NAMESPACES = {
+    'cte': 'http://www.portalfiscal.inf.br/cte'
+}
+
+
+class CTeProcessor:
+    """Processa arquivos XML de CT-e extraindo campos fiscais"""
+    
+    def __init__(self):
+        self.processed_data = []
+    
+    def extract_nfe_number_from_key(self, chave_acesso):
+        if not chave_acesso or len(chave_acesso) != 44:
+            return None
+        try:
+            return chave_acesso[25:34]
+        except Exception:
+            return None
+    
+    def extract_peso_bruto(self, root):
+        """Extrai o peso bruto do CT-e"""
+        try:
+            tipos_peso = ['PESO BRUTO', 'PESO BASE DE CALCULO', 'PESO BASE CÁLCULO', 'PESO']
+            
+            for prefix, uri in CTE_NAMESPACES.items():
+                infQ_elements = root.findall(f'.//{{{uri}}}infQ')
+                for infQ in infQ_elements:
+                    tpMed = infQ.find(f'{{{uri}}}tpMed')
+                    qCarga = infQ.find(f'{{{uri}}}qCarga')
+                    
+                    if tpMed is not None and tpMed.text and qCarga is not None and qCarga.text:
+                        for tipo_peso in tipos_peso:
+                            if tipo_peso in tpMed.text.upper():
+                                return float(qCarga.text)
+            
+            infQ_elements = root.findall('.//infQ')
+            for infQ in infQ_elements:
+                tpMed = infQ.find('tpMed')
+                qCarga = infQ.find('qCarga')
+                
+                if tpMed is not None and tpMed.text and qCarga is not None and qCarga.text:
+                    for tipo_peso in tipos_peso:
+                        if tipo_peso in tpMed.text.upper():
+                            return float(qCarga.text)
+            
+            return 0.0
+        except Exception:
+            return 0.0
+    
+    def extract_cte_data(self, xml_content, filename):
+        """Extrai dados do CT-e"""
+        try:
+            root = ET.fromstring(xml_content)
+            
+            def find_text(element, xpath):
+                try:
+                    for prefix, uri in CTE_NAMESPACES.items():
+                        full_xpath = xpath.replace('cte:', f'{{{uri}}}')
+                        found = element.find(full_xpath)
+                        if found is not None and found.text:
+                            return found.text
+                    
+                    found = element.find(xpath.replace('cte:', ''))
+                    if found is not None and found.text:
+                        return found.text
+                    return None
+                except Exception:
+                    return None
+            
+            nCT = find_text(root, './/cte:nCT')
+            dhEmi = find_text(root, './/cte:dhEmi')
+            cMunIni = find_text(root, './/cte:cMunIni')
+            UFIni = find_text(root, './/cte:UFIni')
+            cMunFim = find_text(root, './/cte:cMunFim')
+            UFFim = find_text(root, './/cte:UFFim')
+            emit_xNome = find_text(root, './/cte:emit/cte:xNome')
+            vTPrest = find_text(root, './/cte:vTPrest')
+            rem_xNome = find_text(root, './/cte:rem/cte:xNome')
+            
+            dest_xNome = find_text(root, './/cte:dest/cte:xNome')
+            dest_CNPJ = find_text(root, './/cte:dest/cte:CNPJ')
+            dest_CPF = find_text(root, './/cte:dest/cte:CPF')
+            documento_destinatario = dest_CNPJ or dest_CPF or 'N/A'
+            
+            dest_xLgr = find_text(root, './/cte:dest/cte:enderDest/cte:xLgr')
+            dest_nro = find_text(root, './/cte:dest/cte:enderDest/cte:nro')
+            dest_xBairro = find_text(root, './/cte:dest/cte:enderDest/cte:xBairro')
+            dest_xMun = find_text(root, './/cte:dest/cte:enderDest/cte:xMun')
+            dest_UF = find_text(root, './/cte:dest/cte:enderDest/cte:UF')
+            dest_CEP = find_text(root, './/cte:dest/cte:enderDest/cte:CEP')
+            
+            endereco_destinatario = ""
+            if dest_xLgr:
+                endereco_destinatario += f"{dest_xLgr}"
+                if dest_nro:
+                    endereco_destinatario += f", {dest_nro}"
+                if dest_xBairro:
+                    endereco_destinatario += f" - {dest_xBairro}"
+                if dest_xMun:
+                    endereco_destinatario += f", {dest_xMun}"
+                if dest_UF:
+                    endereco_destinatario += f"/{dest_UF}"
+                if dest_CEP:
+                    endereco_destinatario += f" - CEP: {dest_CEP}"
+            
+            if not endereco_destinatario:
+                endereco_destinatario = "N/A"
+            
+            infNFe_chave = find_text(root, './/cte:infNFe/cte:chave')
+            numero_nfe = self.extract_nfe_number_from_key(infNFe_chave) if infNFe_chave else None
+            
+            peso_bruto = self.extract_peso_bruto(root)
+            
+            data_formatada = None
+            if dhEmi:
+                try:
+                    data_obj = datetime.strptime(dhEmi[:10], '%Y-%m-%d')
+                    data_formatada = data_obj.strftime('%d/%m/%y')
+                except:
+                    try:
+                        data_obj = datetime.strptime(dhEmi[:10], '%d/%m/%Y')
+                        data_formatada = data_obj.strftime('%d/%m/%y')
+                    except:
+                        data_formatada = dhEmi[:10]
+            
+            try:
+                vTPrest = float(vTPrest) if vTPrest else 0.0
+            except (ValueError, TypeError):
+                vTPrest = 0.0
+            
+            return {
+                'Arquivo': filename,
+                'nCT': nCT or 'N/A',
+                'Data Emissão': data_formatada or dhEmi or 'N/A',
+                'Código Município Início': cMunIni or 'N/A',
+                'UF Início': UFIni or 'N/A',
+                'Código Município Fim': cMunFim or 'N/A',
+                'UF Fim': UFFim or 'N/A',
+                'Emitente': emit_xNome or 'N/A',
+                'Valor Prestação': vTPrest,
+                'Peso Bruto (kg)': peso_bruto,
+                'Remetente': rem_xNome or 'N/A',
+                'Destinatário': dest_xNome or 'N/A',
+                'Documento Destinatário': documento_destinatario,
+                'Endereço Destinatário': endereco_destinatario,
+                'Município Destino': dest_xMun or 'N/A',
+                'UF Destino': dest_UF or 'N/A',
+                'Chave NFe': infNFe_chave or 'N/A',
+                'Número NFe': numero_nfe or 'N/A',
+                'Data Processamento': datetime.now().strftime('%d/%m/%Y %H:%M:%S')
+            }
+        except Exception:
+            return None
+    
+    def process_xml_files_from_directory(self, directory_path):
+        """Processa todos os arquivos XML em um diretório"""
+        xml_files = list(Path(directory_path).glob('*.xml'))
+        count = 0
+        
+        for xml_file in xml_files:
+            try:
+                with open(xml_file, 'r', encoding='utf-8') as f:
+                    content = f.read()
+                
+                if 'CTe' in content or 'conhecimento' in content.lower():
+                    data = self.extract_cte_data(content, xml_file.name)
+                    if data:
+                        self.processed_data.append(data)
+                        count += 1
+            except Exception:
+                pass
+        
+        return count, len(xml_files)
+    
+    def export_to_excel(self, output_path):
+        """Exporta os dados processados para Excel"""
+        if self.processed_data:
+            df = pd.DataFrame(self.processed_data)
+            df.to_excel(output_path, index=False, sheet_name='Dados_CTe')
+            return True, len(df)
+        return False, 0
+    
+    def clear_data(self):
+        self.processed_data = []
+
+
+# ─────────────────────────────────────────────
 # UTILITY FUNCTIONS
 # ─────────────────────────────────────────────
 
 @st.cache_resource
 def clear_wdm_cache():
-    """Limpa o cache do webdriver-manager para forçar download da versão correta"""
+    """Limpa o cache do webdriver-manager"""
     wdm_cache = os.path.expanduser("~/.wdm")
     if os.path.exists(wdm_cache):
         try:
@@ -427,7 +594,7 @@ def clear_wdm_cache():
 
 
 def get_chrome_version(binary_path):
-    """Obtém a versão do Chrome/Chromium instalado"""
+    """Obtém a versão do Chrome/Chromium"""
     try:
         result = subprocess.run(
             [binary_path, "--version"],
@@ -447,7 +614,7 @@ def get_chrome_version(binary_path):
 
 
 def find_chrome_binary():
-    """Localiza o executável do Chrome/Chromium no sistema"""
+    """Localiza o Chrome/Chromium no sistema"""
     system = platform.system()
     
     if system == "Windows":
@@ -482,28 +649,16 @@ def find_chrome_binary():
     if system != "Windows":
         for browser in ["google-chrome", "google-chrome-stable", "chromium-browser", "chromium"]:
             try:
-                result = subprocess.run(
-                    ["which", browser],
-                    capture_output=True,
-                    text=True,
-                    timeout=5
-                )
+                result = subprocess.run(["which", browser], capture_output=True, text=True, timeout=5)
                 if result.returncode == 0 and result.stdout.strip():
                     return result.stdout.strip()
             except Exception:
                 pass
     else:
         try:
-            result = subprocess.run(
-                ["where", "chrome.exe"],
-                capture_output=True,
-                text=True,
-                timeout=5,
-                shell=True
-            )
+            result = subprocess.run(["where", "chrome.exe"], capture_output=True, text=True, timeout=5, shell=True)
             if result.returncode == 0 and result.stdout.strip():
-                paths = result.stdout.strip().split('\n')
-                return paths[0].strip()
+                return result.stdout.strip().split('\n')[0].strip()
         except Exception:
             pass
     
@@ -511,7 +666,7 @@ def find_chrome_binary():
 
 
 def get_driver(download_path, chrome_binary=None, chrome_version=None):
-    """Inicializa o ChromeDriver compatível com a versão do browser"""
+    """Inicializa o ChromeDriver compatível"""
     chrome_options = Options()
     
     chrome_options.add_argument("--headless=new")
@@ -555,7 +710,6 @@ def get_driver(download_path, chrome_binary=None, chrome_version=None):
         driver_kwargs["driver_version"] = major_version
     
     driver_path = ChromeDriverManager(**driver_kwargs).install()
-    
     service = Service(driver_path)
     driver = webdriver.Chrome(service=service, options=chrome_options)
     
@@ -585,6 +739,17 @@ def render_log(lines, active=True):
     """
 
 
+def esperar_downloads(directory, timeout=120):
+    """Aguarda downloads terminarem"""
+    start_time = time.time()
+    while time.time() - start_time < timeout:
+        crdownload_files = list(Path(directory).glob('*.crdownload'))
+        if not crdownload_files:
+            return True
+        time.sleep(1)
+    return False
+
+
 # ─────────────────────────────────────────────
 # LÓGICA PRINCIPAL DE AUTOMAÇÃO
 # ─────────────────────────────────────────────
@@ -594,6 +759,7 @@ if iniciar:
         with right_col:
             st.error("⚠️  Preencha usuário e senha para continuar.")
     else:
+        # Prepara diretório de downloads
         dl_path = "/tmp/downloads"
         if os.path.exists(dl_path):
             shutil.rmtree(dl_path)
@@ -627,6 +793,7 @@ if iniciar:
         driver = None
         
         try:
+            # ── ETAPA 1: Localizar browser ──
             log("Procurando Chrome/Chromium no sistema...", "info")
             chrome_binary = find_chrome_binary()
             
@@ -638,6 +805,7 @@ if iniciar:
             
             log(f"Browser encontrado: {chrome_binary}", "info")
             
+            # ── ETAPA 2: Detectar versão ──
             chrome_version = get_chrome_version(chrome_binary)
             
             if chrome_version:
@@ -645,10 +813,12 @@ if iniciar:
             else:
                 log("Não foi possível detectar a versão do browser", "warn")
             
-            log("Inicializando ChromeDriver (baixando versão compatível)...", "info")
+            # ── ETAPA 3: Inicializar driver ──
+            log("Inicializando ChromeDriver...", "info")
             driver = get_driver(dl_path, chrome_binary, chrome_version)
             log("ChromeDriver inicializado com sucesso!", "ok")
             
+            # ── ETAPA 4: Login ──
             log("Acessando portal MasterSAF...", "info")
             driver.get("https://p.dfe.mastersaf.com.br/mvc/login")
             time.sleep(3)
@@ -663,6 +833,7 @@ if iniciar:
             time.sleep(5)
             log("Autenticação realizada com sucesso.", "ok")
             
+            # ── ETAPA 5: Navegar ──
             log("Navegando até Listagem de CT-es (Receptor)...", "info")
             driver.execute_script(
                 "arguments[0].click();",
@@ -670,6 +841,7 @@ if iniciar:
             )
             time.sleep(4)
             
+            # ── ETAPA 6: Configurar período ──
             log(f"Configurando período: {data_ini} → {data_fin}", "info")
             
             el_ini = driver.find_element(By.XPATH, '//*[@id="consultaDataInicial"]')
@@ -685,8 +857,9 @@ if iniciar:
                 driver.find_element(By.XPATH, '//*[@id="listagem_atualiza"]')
             )
             time.sleep(4)
-            log("Base de dados atualizada com o período selecionado.", "ok")
+            log("Base de dados atualizada.", "ok")
             
+            # ── ETAPA 7: Selecionar 100 registros ──
             log("Configurando exibição: 100 registros por página...", "info")
             driver.find_element(
                 By.XPATH,
@@ -694,6 +867,7 @@ if iniciar:
             ).click()
             time.sleep(4)
             
+            # ── ETAPA 8: Loop de captura ──
             total_paginas = int(qtd_loops)
             log(f"Iniciando captura em massa: {total_paginas} página(s)...", "info")
             
@@ -720,7 +894,9 @@ if iniciar:
                     driver.find_element(By.XPATH, '//*[@id="downloadEmMassaXml"]')
                 )
                 log(f"Download da página {pagina_atual} iniciado...", "dim")
-                time.sleep(8)
+                
+                esperar_downloads(dl_path)
+                time.sleep(5)
                 
                 driver.execute_script(
                     "arguments[0].click();",
@@ -741,33 +917,136 @@ if iniciar:
                 log(f"Página {pagina_atual} concluída.", "ok")
                 time.sleep(2)
             
-            log("Compactando arquivos XML em ZIP...", "info")
+            log("Captura finalizada!", "ok")
             
-            zip_filename = "/tmp/resultado.zip"
-            total_arquivos = 0
+            # Fecha o navegador
+            driver.quit()
+            driver = None
             
-            with zipfile.ZipFile(zip_filename, 'w', zipfile.ZIP_DEFLATED) as zipf:
-                for root, dirs, files in os.walk(dl_path):
-                    for file in files:
-                        file_path = os.path.join(root, file)
-                        zipf.write(file_path, file)
-                        total_arquivos += 1
-            
-            log(f"Compactação concluída: {total_arquivos} arquivo(s).", "ok")
+            # ── ETAPA 9: Pós-processamento (se checkbox marcado) ──
+            if processar_xml:
+                log("=" * 50, "info")
+                log("📦 INICIANDO PROCESSAMENTO DOS ARQUIVOS", "info")
+                log("=" * 50, "info")
+                
+                # Localiza ZIPs
+                zip_files = list(Path(dl_path).glob('*.zip'))
+                log(f"🔍 {len(zip_files)} arquivos ZIP encontrados", "info")
+                
+                if not zip_files:
+                    log("⚠ Nenhum arquivo ZIP para processar!", "warn")
+                else:
+                    # Cria diretório de extração
+                    extract_dir = tempfile.mkdtemp(prefix="mastersaf_extracted_")
+                    
+                    # Extrai ZIPs
+                    log("📂 Extraindo arquivos ZIP...", "info")
+                    all_xml_dirs = []
+                    
+                    for zip_file in zip_files:
+                        try:
+                            zip_name = zip_file.stem
+                            extract_path = os.path.join(extract_dir, zip_name)
+                            os.makedirs(extract_path, exist_ok=True)
+                            
+                            with zipfile.ZipFile(zip_file, 'r') as zip_ref:
+                                zip_ref.extractall(extract_path)
+                            
+                            all_xml_dirs.append(extract_path)
+                            log(f"   ✔ {zip_file.name}", "ok")
+                        except Exception as e:
+                            log(f"   ❌ Erro ao extrair {zip_file.name}: {e}", "err")
+                    
+                    # Processa XMLs
+                    log("📄 Processando arquivos XML de CT-e...", "info")
+                    
+                    processor = CTeProcessor()
+                    total_xml_encontrados = 0
+                    total_xml_lidos = 0
+                    
+                    for xml_dir in all_xml_dirs:
+                        processados, encontrados = processor.process_xml_files_from_directory(xml_dir)
+                        total_xml_encontrados += encontrados
+                        total_xml_lidos += processados
+                    
+                    log(f"📊 XMLs encontrados: {total_xml_encontrados}", "info")
+                    log(f"📊 CT-es identificados: {total_xml_lidos}", "info")
+                    
+                    # Gera Excel
+                    if total_xml_lidos > 0:
+                        log("📊 Gerando arquivo Excel consolidado...", "info")
+                        
+                        # Cria pasta de resultados
+                        results_dir = "/tmp/mastersaf_resultados"
+                        os.makedirs(results_dir, exist_ok=True)
+                        
+                        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                        excel_filename = f"CTe_Processados_{timestamp}.xlsx"
+                        excel_path = os.path.join(results_dir, excel_filename)
+                        
+                        success, num_registros = processor.export_to_excel(excel_path)
+                        
+                        if success:
+                            # Calcula totais
+                            df = pd.DataFrame(processor.processed_data)
+                            peso_total = df['Peso Bruto (kg)'].sum()
+                            valor_total = df['Valor Prestação'].sum()
+                            
+                            log(f"✅ Excel gerado com sucesso!", "ok")
+                            log(f"📈 Resumo:", "info")
+                            log(f"   • Registros: {num_registros}", "dim")
+                            log(f"   • Peso Bruto Total: {peso_total:,.2f} kg", "dim")
+                            log(f"   • Valor Total: R$ {valor_total:,.2f}", "dim")
+                            
+                            # Botão de download do Excel
+                            with open(excel_path, "rb") as f:
+                                excel_placeholder.download_button(
+                                    f"📥  BAIXAR EXCEL CONSOLIDADO ({num_registros} CT-es)",
+                                    f,
+                                    excel_filename,
+                                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                                )
+                            
+                            # Mostra preview da tabela
+                            st.dataframe(
+                                df.head(10),
+                                use_container_width=True,
+                                hide_index=True
+                            )
+                            st.caption(f"Mostrando 10 de {num_registros} registros")
+                        else:
+                            log("⚠ Erro ao gerar Excel", "err")
+                    else:
+                        log("⚠ Nenhum CT-e identificado nos XMLs", "warn")
+                    
+                    processor.clear_data()
+                    
+                    # Limpa diretório de extração
+                    try:
+                        shutil.rmtree(extract_dir)
+                    except:
+                        pass
+            else:
+                # Se não processar, oferece ZIP
+                log("⚠ Processamento desativado. Compactando ZIPs...", "warn")
+                
+                zip_filename = "/tmp/resultado.zip"
+                with zipfile.ZipFile(zip_filename, 'w', zipfile.ZIP_DEFLATED) as zipf:
+                    for root, dirs, files in os.walk(dl_path):
+                        for file in files:
+                            file_path = os.path.join(root, file)
+                            zipf.write(file_path, file)
+                
+                with open(zip_filename, "rb") as f:
+                    download_placeholder.download_button(
+                        "📥  BAIXAR ARQUIVOS XML (.ZIP)",
+                        f,
+                        "XMLs_MasterSaf.zip",
+                        "application/zip",
+                    )
             
             log("Processo finalizado com sucesso!", "ok")
             log_placeholder.markdown(render_log(logs, active=False), unsafe_allow_html=True)
-            
-            with open(zip_filename, "rb") as f:
-                download_placeholder.download_button(
-                    f"📥  BAIXAR {total_arquivos} ARQUIVOS XML (.ZIP)",
-                    f,
-                    "XMLs_MasterSaf.zip",
-                    "application/zip",
-                )
-            
-            driver.quit()
-            driver = None
             
         except Exception as e:
             error_msg = str(e)
