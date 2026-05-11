@@ -9,6 +9,8 @@ from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
 from webdriver_manager.chrome import ChromeDriverManager
+import subprocess
+import platform
 
 # ─────────────────────────────────────────────
 # CONFIGURAÇÃO DA PÁGINA
@@ -277,7 +279,69 @@ with right_col:
     """, unsafe_allow_html=True)
 
 # ─────────────────────────────────────────────
-# DRIVER — Windows + webdriver_manager
+# UTILITY — Find Chrome binary
+# ─────────────────────────────────────────────
+def find_chrome_binary():
+    """Tenta localizar o executável do Chrome no sistema"""
+    
+    # Possíveis caminhos para o Chrome
+    if platform.system() == "Windows":
+        possible_paths = [
+            "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
+            "C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe",
+            os.path.expanduser("~\\AppData\\Local\\Google\\Chrome\\Application\\chrome.exe"),
+        ]
+    elif platform.system() == "Linux":
+        possible_paths = [
+            "/usr/bin/google-chrome",
+            "/usr/bin/google-chrome-stable",
+            "/usr/bin/chromium-browser",
+            "/usr/bin/chromium",
+            "/snap/bin/chromium",
+        ]
+    elif platform.system() == "Darwin":  # macOS
+        possible_paths = [
+            "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+            os.path.expanduser("~/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"),
+        ]
+    else:
+        return None
+    
+    # Verifica caminhos conhecidos
+    for path in possible_paths:
+        if os.path.isfile(path):
+            return path
+    
+    # Tenta encontrar via 'which' no Linux/macOS
+    if platform.system() != "Windows":
+        try:
+            result = subprocess.run(["which", "google-chrome"], capture_output=True, text=True, timeout=5)
+            if result.returncode == 0 and result.stdout.strip():
+                return result.stdout.strip()
+            
+            result = subprocess.run(["which", "chromium-browser"], capture_output=True, text=True, timeout=5)
+            if result.returncode == 0 and result.stdout.strip():
+                return result.stdout.strip()
+            
+            result = subprocess.run(["which", "chromium"], capture_output=True, text=True, timeout=5)
+            if result.returncode == 0 and result.stdout.strip():
+                return result.stdout.strip()
+        except:
+            pass
+    
+    # Tenta encontrar via 'where' no Windows
+    if platform.system() == "Windows":
+        try:
+            result = subprocess.run(["where", "chrome"], capture_output=True, text=True, timeout=5, shell=True)
+            if result.returncode == 0 and result.stdout.strip():
+                return result.stdout.strip().split('\n')[0]
+        except:
+            pass
+    
+    return None
+
+# ─────────────────────────────────────────────
+# DRIVER — Multi-plataforma com webdriver_manager
 # ─────────────────────────────────────────────
 def get_driver(download_path):
     chrome_options = Options()
@@ -290,6 +354,8 @@ def get_driver(download_path):
     chrome_options.add_argument("--disable-extensions")
     chrome_options.add_argument("--disable-infobars")
     chrome_options.add_argument("--js-flags=--expose-gc")
+    chrome_options.add_argument("--disable-blink-features=AutomationControlled")
+    
     prefs = {
         "download.default_directory": download_path,
         "download.prompt_for_download": False,
@@ -297,7 +363,15 @@ def get_driver(download_path):
         "safebrowsing.enabled": False,
     }
     chrome_options.add_experimental_option("prefs", prefs)
-    chrome_options.binary_location = "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe"
+    chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
+    chrome_options.add_experimental_option('useAutomationExtension', False)
+    
+    # Tenta encontrar o Chrome
+    chrome_binary = find_chrome_binary()
+    if chrome_binary:
+        chrome_options.binary_location = chrome_binary
+    # Se não encontrar, o webdriver_manager tentará baixar o Chrome automaticamente
+    
     return webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=chrome_options)
 
 # ─────────────────────────────────────────────
@@ -350,6 +424,13 @@ if iniciar:
             log_placeholder.markdown(render_log(logs), unsafe_allow_html=True)
 
         try:
+            # Verifica se o Chrome existe
+            chrome_binary = find_chrome_binary()
+            if not chrome_binary:
+                log("Chrome não encontrado. Tentando usar Chromium via webdriver-manager...", "info")
+            else:
+                log(f"Chrome encontrado em: {chrome_binary}", "info")
+            
             log("Inicializando driver Chrome via webdriver-manager...", "info")
             driver = get_driver(dl_path)
 
@@ -431,4 +512,7 @@ if iniciar:
         except Exception as e:
             log(f"Erro: {e}", "err")
             if 'driver' in locals():
-                driver.quit()
+                try:
+                    driver.quit()
+                except:
+                    pass
