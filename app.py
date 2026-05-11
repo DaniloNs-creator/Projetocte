@@ -9,8 +9,10 @@ from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
 from webdriver_manager.chrome import ChromeDriverManager
+from webdriver_manager.core.os_manager import ChromeType
 import subprocess
 import platform
+import re
 
 # ─────────────────────────────────────────────
 # CONFIGURAÇÃO DA PÁGINA
@@ -279,17 +281,33 @@ with right_col:
     """, unsafe_allow_html=True)
 
 # ─────────────────────────────────────────────
-# UTILITY — Find Chrome binary
+# UTILITY — Find Chrome/Chromium binary and version
 # ─────────────────────────────────────────────
+def get_chrome_version(binary_path):
+    """Obtém a versão do Chrome/Chromium"""
+    try:
+        result = subprocess.run(
+            [binary_path, "--version"],
+            capture_output=True,
+            text=True,
+            timeout=5
+        )
+        version_match = re.search(r'(\d+\.\d+\.\d+\.\d+)', result.stdout)
+        if version_match:
+            return version_match.group(1)
+    except:
+        pass
+    return None
+
 def find_chrome_binary():
-    """Tenta localizar o executável do Chrome no sistema"""
+    """Tenta localizar o executável do Chrome/Chromium no sistema"""
     
-    # Possíveis caminhos para o Chrome
     if platform.system() == "Windows":
         possible_paths = [
             "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
             "C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe",
             os.path.expanduser("~\\AppData\\Local\\Google\\Chrome\\Application\\chrome.exe"),
+            "C:\\Program Files\\Chromium\\Application\\chrome.exe",
         ]
     elif platform.system() == "Linux":
         possible_paths = [
@@ -303,6 +321,7 @@ def find_chrome_binary():
         possible_paths = [
             "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
             os.path.expanduser("~/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"),
+            "/Applications/Chromium.app/Contents/MacOS/Chromium",
         ]
     else:
         return None
@@ -314,20 +333,13 @@ def find_chrome_binary():
     
     # Tenta encontrar via 'which' no Linux/macOS
     if platform.system() != "Windows":
-        try:
-            result = subprocess.run(["which", "google-chrome"], capture_output=True, text=True, timeout=5)
-            if result.returncode == 0 and result.stdout.strip():
-                return result.stdout.strip()
-            
-            result = subprocess.run(["which", "chromium-browser"], capture_output=True, text=True, timeout=5)
-            if result.returncode == 0 and result.stdout.strip():
-                return result.stdout.strip()
-            
-            result = subprocess.run(["which", "chromium"], capture_output=True, text=True, timeout=5)
-            if result.returncode == 0 and result.stdout.strip():
-                return result.stdout.strip()
-        except:
-            pass
+        for browser in ["google-chrome", "chromium-browser", "chromium"]:
+            try:
+                result = subprocess.run(["which", browser], capture_output=True, text=True, timeout=5)
+                if result.returncode == 0 and result.stdout.strip():
+                    return result.stdout.strip()
+            except:
+                pass
     
     # Tenta encontrar via 'where' no Windows
     if platform.system() == "Windows":
@@ -341,9 +353,9 @@ def find_chrome_binary():
     return None
 
 # ─────────────────────────────────────────────
-# DRIVER — Multi-plataforma com webdriver_manager
+# DRIVER — Compatível com a versão do Chrome/Chromium
 # ─────────────────────────────────────────────
-def get_driver(download_path):
+def get_driver(download_path, chrome_binary=None, chrome_version=None):
     chrome_options = Options()
     chrome_options.add_argument("--headless=new")
     chrome_options.add_argument("--window-size=1920x1080")
@@ -366,13 +378,25 @@ def get_driver(download_path):
     chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
     chrome_options.add_experimental_option('useAutomationExtension', False)
     
-    # Tenta encontrar o Chrome
-    chrome_binary = find_chrome_binary()
     if chrome_binary:
         chrome_options.binary_location = chrome_binary
-    # Se não encontrar, o webdriver_manager tentará baixar o Chrome automaticamente
     
-    return webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=chrome_options)
+    # Configura o ChromeDriverManager com a versão correta
+    driver_manager = ChromeDriverManager()
+    
+    if chrome_version:
+        # Extrai apenas a versão principal (ex: 148 de 148.0.7778.96)
+        major_version = chrome_version.split('.')[0]
+        driver_manager.driver_version = major_version
+        
+        # Para Chromium, especifica o tipo
+        if 'chromium' in chrome_binary.lower() if chrome_binary else False:
+            driver_manager.chrome_type = ChromeType.CHROMIUM
+    
+    return webdriver.Chrome(
+        service=Service(driver_manager.install()),
+        options=chrome_options
+    )
 
 # ─────────────────────────────────────────────
 # HELPER — render terminal log
@@ -424,15 +448,20 @@ if iniciar:
             log_placeholder.markdown(render_log(logs), unsafe_allow_html=True)
 
         try:
-            # Verifica se o Chrome existe
+            # Encontra o Chrome/Chromium
             chrome_binary = find_chrome_binary()
             if not chrome_binary:
-                log("Chrome não encontrado. Tentando usar Chromium via webdriver-manager...", "info")
-            else:
-                log(f"Chrome encontrado em: {chrome_binary}", "info")
+                raise Exception("Chrome/Chromium não encontrado no sistema. Instale o Chrome ou Chromium.")
             
-            log("Inicializando driver Chrome via webdriver-manager...", "info")
-            driver = get_driver(dl_path)
+            # Obtém a versão
+            chrome_version = get_chrome_version(chrome_binary)
+            
+            log(f"Browser encontrado: {chrome_binary}", "info")
+            if chrome_version:
+                log(f"Versão detectada: {chrome_version}", "info")
+                log(f"Baixando ChromeDriver compatível com a versão {chrome_version.split('.')[0]}...", "info")
+            
+            driver = get_driver(dl_path, chrome_binary, chrome_version)
 
             log("Acessando portal MasterSAF...", "info")
             driver.get("https://p.dfe.mastersaf.com.br/mvc/login")
