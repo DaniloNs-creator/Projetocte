@@ -1,441 +1,471 @@
 import streamlit as st
-import os
-import shutil
-import zipfile
-import time
-import tempfile
-import io
-from pathlib import Path
-import xml.etree.ElementTree as ET
-import pandas as pd
 from datetime import datetime
+import pandas as pd
+import plotly.express as px
+import plotly.graph_objects as go
+from typing import Optional, Dict, Any
+import chardet
+from io import BytesIO
+import time
+import xml.etree.ElementTree as ET
+import os
+import traceback
+import numpy as np
+import fitz
+import pdfplumber
+import re
+from lxml import etree
+import tempfile
+import logging
+import gc
+import sqlite3
+from datetime import timedelta, date
+from typing import List, Tuple
+import io
+import contextlib
+import base64
+import hashlib
+import xml.dom.minidom
+from pathlib import Path
+import random
+import zipfile
+import shutil
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
-from selenium.common.exceptions import TimeoutException, NoSuchElementException, WebDriverException
 import subprocess
-import requests
-import re
-import signal
-import psutil
 
+# ==============================================================================
+# CONFIGURAÇÃO AUTOMÁTICA DO SERVIDOR STREAMLIT
+# Suporta PDFs gigantes — até 2 GB
+# ==============================================================================
+_PDF_CHUNK_PAGES = 50
+
+def setup_streamlit_config():
+    try:
+        os.makedirs(".streamlit", exist_ok=True)
+        config_path = os.path.join(".streamlit", "config.toml")
+        with open(config_path, "w", encoding="utf-8") as f:
+            f.write("[server]\nmaxUploadSize = 2000\nmaxMessageSize = 2000\n")
+    except Exception:
+        pass
+
+setup_streamlit_config()
+
+# ==============================================================================
+# CONFIGURAÇÃO INICIAL
+# ==============================================================================
 st.set_page_config(
-    page_title="MasterSAF — Automação XML",
-    page_icon="⚡",
+    page_title="Sistema de Processamento Unificado 2026",
+    page_icon="📊",
     layout="wide",
     initial_sidebar_state="collapsed",
 )
 
-# ── INICIALIZAÇÃO DAS VARIÁVEIS DE SESSÃO ──
-if 'ms_logs' not in st.session_state:
-    st.session_state.ms_logs = []
-if 'download_path' not in st.session_state:
-    st.session_state.download_path = None
-if 'execucao_ativa' not in st.session_state:
-    st.session_state.execucao_ativa = False
-if 'progresso_atual' not in st.session_state:
-    st.session_state.progresso_atual = 0
-
-st.markdown("""
-<style>
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap');
-
-#MainMenu, footer, header, [data-testid="stSidebar"], [data-testid="collapsedControl"] {
-    display: none !important;
-}
-
-*, *::before, *::after { box-sizing: border-box; }
-
-html, body, [data-testid="stAppViewContainer"], [data-testid="stMain"] {
-    background: #060810 !important;
-    color: #e2e8f0 !important;
-    font-family: 'Inter', sans-serif !important;
-}
-
-[data-testid="stMainBlockContainer"] {
-    padding: 0 !important;
-    max-width: 100% !important;
-}
-
-/* ── TOP NAV ── */
-.nav-bar {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 1rem 2.5rem;
-    border-bottom: 1px solid rgba(255,255,255,0.06);
-    background: rgba(6,8,16,0.95);
-    backdrop-filter: blur(12px);
-    position: sticky;
-    top: 0;
-    z-index: 100;
-}
-.nav-logo {
-    font-family: 'JetBrains Mono', monospace;
-    font-weight: 600;
-    font-size: 1.05rem;
-    color: #f8fafc;
-    letter-spacing: -0.01em;
-}
-.nav-logo em { color: #22d3a5; font-style: normal; }
-.nav-badge {
-    font-family: 'JetBrains Mono', monospace;
-    font-size: 0.68rem;
-    color: #22d3a5;
-    background: rgba(34,211,165,0.1);
-    border: 1px solid rgba(34,211,165,0.25);
-    border-radius: 20px;
-    padding: 0.25rem 0.8rem;
-    letter-spacing: 0.08em;
-}
-
-/* ── HERO ── */
-.hero-wrap {
-    padding: 3.5rem 2.5rem 2.5rem;
-    max-width: 1100px;
-    margin: 0 auto;
-}
-.hero-eyebrow {
-    font-family: 'JetBrains Mono', monospace;
-    font-size: 0.72rem;
-    color: #22d3a5;
-    letter-spacing: 0.18em;
-    text-transform: uppercase;
-    margin-bottom: 1rem;
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-}
-.hero-eyebrow::before {
-    content: '';
-    display: inline-block;
-    width: 24px; height: 1px;
-    background: #22d3a5;
-}
-.hero-h1 {
-    font-size: clamp(2rem, 4vw, 3.2rem);
-    font-weight: 800;
-    color: #f8fafc;
-    line-height: 1.1;
-    letter-spacing: -0.03em;
-    margin: 0 0 0.8rem;
-}
-.hero-h1 span { 
-    background: linear-gradient(135deg, #22d3a5, #3b82f6);
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
-    background-clip: text;
-}
-.hero-sub {
-    font-size: 1rem;
-    color: #64748b;
-    font-weight: 400;
-    max-width: 560px;
-    line-height: 1.6;
-}
-
-/* ── MAIN GRID ── */
-.main-grid {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 1.5rem;
-    max-width: 1100px;
-    margin: 0 auto;
-    padding: 0 2.5rem 2rem;
-}
-@media (max-width: 768px) {
-    .main-grid { grid-template-columns: 1fr; }
-}
-
-/* ── CARDS ── */
-.card {
-    background: #0d1117;
-    border: 1px solid rgba(255,255,255,0.07);
-    border-radius: 16px;
-    padding: 1.5rem;
-    transition: border-color 0.2s;
-}
-.card:hover { border-color: rgba(34,211,165,0.2); }
-.card-title {
-    font-size: 0.7rem;
-    font-weight: 600;
-    color: #475569;
-    text-transform: uppercase;
-    letter-spacing: 0.14em;
-    margin-bottom: 1.2rem;
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-}
-.card-title::after {
-    content: '';
-    flex: 1;
-    height: 1px;
-    background: rgba(255,255,255,0.05);
-}
-
-/* ── INPUTS ── */
-[data-testid="stTextInput"] input,
-[data-testid="stNumberInput"] input,
-[data-testid="stPasswordInput"] input {
-    background: #070a0f !important;
-    border: 1px solid rgba(255,255,255,0.08) !important;
-    border-radius: 10px !important;
-    color: #e2e8f0 !important;
-    font-family: 'Inter', sans-serif !important;
-    font-size: 0.88rem !important;
-    padding: 0.6rem 0.9rem !important;
-    transition: border-color 0.2s !important;
-}
-[data-testid="stTextInput"] input:focus,
-[data-testid="stNumberInput"] input:focus,
-[data-testid="stPasswordInput"] input:focus {
-    border-color: rgba(34,211,165,0.5) !important;
-    box-shadow: 0 0 0 3px rgba(34,211,165,0.08) !important;
-    outline: none !important;
-}
-[data-testid="stTextInput"] label,
-[data-testid="stNumberInput"] label,
-[data-testid="stPasswordInput"] label {
-    font-size: 0.78rem !important;
-    font-weight: 500 !important;
-    color: #94a3b8 !important;
-    margin-bottom: 0.3rem !important;
-}
-
-/* ── CHECKBOX ── */
-[data-testid="stCheckbox"] label {
-    font-size: 0.85rem !important;
-    color: #94a3b8 !important;
-    gap: 0.6rem !important;
-}
-[data-testid="stCheckbox"] span[data-baseweb="checkbox"] {
-    background: #070a0f !important;
-    border-color: rgba(255,255,255,0.15) !important;
-    border-radius: 5px !important;
-}
-
-/* ── MAIN BUTTON ── */
-.stButton > button {
-    background: linear-gradient(135deg, #22d3a5 0%, #3b82f6 100%) !important;
-    color: #020408 !important;
-    font-family: 'Inter', sans-serif !important;
-    font-weight: 700 !important;
-    font-size: 0.88rem !important;
-    border: none !important;
-    border-radius: 10px !important;
-    padding: 0.75rem 2rem !important;
-    width: 100% !important;
-    letter-spacing: 0.01em !important;
-    transition: opacity 0.2s, transform 0.15s !important;
-    cursor: pointer !important;
-}
-.stButton > button:hover {
-    opacity: 0.9 !important;
-    transform: translateY(-1px) !important;
-}
-.stButton > button:active { transform: translateY(0) !important; }
-.stButton > button:disabled {
-    opacity: 0.5 !important;
-    cursor: not-allowed !important;
-}
-
-/* ── DOWNLOAD BUTTON ── */
-.stDownloadButton > button {
-    background: transparent !important;
-    color: #22d3a5 !important;
-    border: 1px solid rgba(34,211,165,0.4) !important;
-    font-family: 'Inter', sans-serif !important;
-    font-weight: 600 !important;
-    font-size: 0.85rem !important;
-    border-radius: 10px !important;
-    padding: 0.7rem 1.5rem !important;
-    width: 100% !important;
-    transition: all 0.2s !important;
-}
-.stDownloadButton > button:hover {
-    background: rgba(34,211,165,0.1) !important;
-    border-color: #22d3a5 !important;
-}
-
-/* ── PROGRESS ── */
-[data-testid="stProgress"] > div {
-    background: rgba(255,255,255,0.05) !important;
-    border-radius: 99px !important;
-    height: 5px !important;
-}
-[data-testid="stProgress"] > div > div {
-    background: linear-gradient(90deg, #22d3a5, #3b82f6) !important;
-    border-radius: 99px !important;
-}
-
-/* ── ALERT ── */
-[data-testid="stAlert"] {
-    background: #0d1117 !important;
-    border-radius: 10px !important;
-    border-left: 3px solid !important;
-    font-family: 'Inter', sans-serif !important;
-    font-size: 0.82rem !important;
-}
-
-/* ── STAT CARDS ── */
-.stat-grid {
-    display: grid;
-    grid-template-columns: repeat(4, 1fr);
-    gap: 1rem;
-    max-width: 1100px;
-    margin: 0 auto;
-    padding: 0 2.5rem 1.5rem;
-}
-@media (max-width: 768px) {
-    .stat-grid { grid-template-columns: repeat(2, 1fr); }
-}
-.stat-card {
-    background: #0d1117;
-    border: 1px solid rgba(255,255,255,0.07);
-    border-radius: 14px;
-    padding: 1.2rem 1.4rem;
-}
-.stat-label {
-    font-size: 0.68rem;
-    font-weight: 600;
-    color: #475569;
-    text-transform: uppercase;
-    letter-spacing: 0.12em;
-    margin-bottom: 0.5rem;
-}
-.stat-value {
-    font-family: 'JetBrains Mono', monospace;
-    font-size: 1.5rem;
-    font-weight: 600;
-    color: #22d3a5;
-    line-height: 1;
-}
-.stat-sub {
-    font-size: 0.72rem;
-    color: #475569;
-    margin-top: 0.3rem;
-}
-
-/* ── EXEC SECTION ── */
-.exec-wrap {
-    max-width: 1100px;
-    margin: 0 auto;
-    padding: 0 2.5rem 2rem;
-}
-.exec-header {
-    font-size: 0.7rem;
-    font-weight: 600;
-    color: #475569;
-    text-transform: uppercase;
-    letter-spacing: 0.14em;
-    margin-bottom: 1rem;
-    display: flex;
-    align-items: center;
-    gap: 0.6rem;
-}
-.exec-header .dot {
-    width: 6px; height: 6px;
-    border-radius: 50%;
-    background: #22d3a5;
-    animation: pulse 1.5s infinite;
-}
-@keyframes pulse {
-    0%, 100% { opacity: 1; transform: scale(1); }
-    50% { opacity: 0.5; transform: scale(0.8); }
-}
-
-/* ── DL SECTION ── */
-.dl-wrap {
-    max-width: 1100px;
-    margin: 0 auto;
-    padding: 0 2.5rem 3rem;
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 1rem;
-}
-@media (max-width: 768px) { .dl-wrap { grid-template-columns: 1fr; } }
-
-/* ── DIVIDER ── */
-.divider {
-    max-width: 1100px;
-    margin: 0 auto 1.5rem;
-    padding: 0 2.5rem;
-}
-.divider hr {
-    border: none;
-    border-top: 1px solid rgba(255,255,255,0.05);
-}
-
-/* ── CODE BLOCK (log) ── */
-[data-testid="stCode"] {
-    background: #070a0f !important;
-    border: 1px solid rgba(255,255,255,0.06) !important;
-    border-radius: 12px !important;
-    font-family: 'JetBrains Mono', monospace !important;
-    font-size: 0.75rem !important;
-}
-
-/* ── SAFETY STATUS ── */
-.safety-badge {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.5rem;
-    padding: 0.4rem 1rem;
-    border-radius: 20px;
-    font-family: 'JetBrains Mono', monospace;
-    font-size: 0.7rem;
-}
-.safety-ok {
-    background: rgba(34,211,165,0.1);
-    border: 1px solid rgba(34,211,165,0.3);
-    color: #22d3a5;
-}
-.safety-warn {
-    background: rgba(251,191,36,0.1);
-    border: 1px solid rgba(251,191,36,0.3);
-    color: #fbbf24;
-}
-</style>
-""", unsafe_allow_html=True)
-
-# ─────────────────────────────────────────────
-# NAMESPACES CT-e
-# ─────────────────────────────────────────────
 CTE_NAMESPACES = {'cte': 'http://www.portalfiscal.inf.br/cte'}
 
-# ─────────────────────────────────────────────
-# FUNÇÕES DE LOG E CONTROLE
-# ─────────────────────────────────────────────
-def add_log(msg):
-    """Adiciona mensagem ao log com limite de segurança"""
-    ts = datetime.now().strftime("%H:%M:%S")
-    st.session_state.ms_logs.append(f"[{ts}]  {msg}")
-    # Limitar logs para não sobrecarregar memória (manter últimos 500)
-    if len(st.session_state.ms_logs) > 500:
-        st.session_state.ms_logs = st.session_state.ms_logs[-500:]
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
-def kill_chrome_processes():
-    """Mata todos os processos do Chrome/Chromium para liberar recursos"""
-    try:
-        for proc in psutil.process_iter(['pid', 'name']):
+# ==============================================================================
+# SESSION STATE
+# ==============================================================================
+_defaults = {
+    'selected_xml': None, 'cte_data': None,
+    'parsed_duimp': None, 'parsed_sigraweb': None,
+    'merged_df': None, 'last_duimp': None,
+    'layout_app2': 'sigraweb',
+    # MasterSAF session state
+    'ms_logs': [],
+    'ms_download_path': None,
+    'ms_processed_data': [],
+}
+for k, v in _defaults.items():
+    if k not in st.session_state:
+        st.session_state[k] = v
+
+# ==============================================================================
+# HELPERS UI
+# ==============================================================================
+def show_loading_animation(message="Processando..."):
+    with st.spinner(message):
+        pb = st.progress(0)
+        for i in range(100):
+            time.sleep(0.01)
+            pb.progress(i + 1)
+        pb.empty()
+
+def show_processing_animation(message="Analisando dados..."):
+    ph = st.empty()
+    with ph.container():
+        _, c, _ = st.columns([1, 2, 1])
+        with c:
+            st.info(f"⏳ {message}")
+            sp = st.empty()
+            chars = ["⣾","⣽","⣻","⢿","⡿","⣟","⣯","⣷"]
+            for i in range(20):
+                sp.markdown(f"<div style='text-align:center;font-size:24px'>{chars[i%8]}</div>",
+                            unsafe_allow_html=True)
+                time.sleep(0.1)
+    ph.empty()
+
+def show_success_animation(message="Concluído!"):
+    ph = st.empty()
+    with ph.container():
+        st.success(f"✅ {message}")
+        time.sleep(1.2)
+    ph.empty()
+
+def ph(html: str):
+    """Shortcut for st.markdown with unsafe_allow_html=True"""
+    st.markdown(html, unsafe_allow_html=True)
+
+def page_header(icon: str, title: str, sub: str):
+    ph(f"""
+    <div class="ph">
+        <span class="ph-icon">{icon}</span>
+        <div><div class="ph-title">{title}</div>
+        <div class="ph-sub">{sub}</div></div>
+    </div>""")
+
+def section_title(text: str):
+    ph(f'<div class="stitle">{text}</div>')
+
+def empty_state(icon: str, title: str, sub: str = ""):
+    ph(f"""
+    <div class="empty">
+        <div class="empty-icon">{icon}</div>
+        <div class="empty-title">{title}</div>
+        <div class="empty-sub">{sub}</div>
+    </div>""")
+
+def status_ok(text: str):
+    ph(f'<div class="sbox sbox-ok">✅ {text}</div>')
+
+def status_warn(text: str):
+    ph(f'<div class="sbox sbox-warn">⚠️ {text}</div>')
+
+# ==============================================================================
+# CSS
+# ==============================================================================
+def load_css():
+    ph("""<style>
+    :root{
+        --navy:#0F172A; --blue:#1E3A8A; --blue-m:#2563EB; --blue-l:#3B82F6;
+        --blue-bg:#EFF6FF; --blue-b:#BFDBFE;
+        --green:#059669; --green-bg:#D1FAE5;
+        --amber:#D97706; --amber-bg:#FEF3C7;
+        --red:#DC2626;
+        --bg:#F1F5F9; --surface:#FFFFFF;
+        --border:#E2E8F0; --muted:#64748B;
+        --r:8px; --r-lg:16px; --r-xl:22px;
+        --sh0:0 1px 2px rgba(0,0,0,.05);
+        --sh1:0 1px 3px rgba(0,0,0,.08),0 1px 2px rgba(0,0,0,.05);
+        --sh2:0 4px 16px rgba(0,0,0,.10);
+        --sh3:0 12px 36px rgba(0,0,0,.14);
+        --tr:all .18s cubic-bezier(.4,0,.2,1);
+        --glow:0 0 0 3px rgba(59,130,246,.20);
+    }
+
+    html,body,[class*="css"]{font-family:'Inter','Segoe UI',system-ui,sans-serif;-webkit-font-smoothing:antialiased;}
+    ::-webkit-scrollbar{width:5px;height:5px}
+    ::-webkit-scrollbar-track{background:var(--bg);border-radius:10px}
+    ::-webkit-scrollbar-thumb{background:#CBD5E1;border-radius:10px}
+    ::-webkit-scrollbar-thumb:hover{background:#94A3B8}
+    .block-container{padding-top:1.2rem!important}
+
+    .hero{
+        position:relative;
+        background:linear-gradient(135deg,#0F172A 0%,#1E3A8A 52%,#1D4ED8 100%);
+        border-radius:var(--r-xl);padding:2.4rem 3rem 2rem;margin-bottom:1.4rem;
+        text-align:center;overflow:hidden;
+    }
+    .hero::before{
+        content:'';position:absolute;inset:0;
+        background-image:linear-gradient(rgba(255,255,255,.04) 1px,transparent 1px),
+                         linear-gradient(90deg,rgba(255,255,255,.04) 1px,transparent 1px);
+        background-size:40px 40px;pointer-events:none;
+    }
+    .hero::after{
+        content:'';position:absolute;right:-60px;top:-60px;
+        width:260px;height:260px;border-radius:50%;
+        background:radial-gradient(circle,rgba(96,165,250,.20) 0%,transparent 70%);
+        pointer-events:none;
+    }
+    .hero-logo{max-width:190px;margin-bottom:.9rem;
+               filter:drop-shadow(0 4px 14px rgba(0,0,0,.35));position:relative;z-index:1;}
+    .hero-title{font-size:2.1rem;font-weight:800;color:#fff;margin:0 0 .35rem;
+                letter-spacing:-.6px;line-height:1.15;position:relative;z-index:1;}
+    .hero-sub{font-size:.92rem;color:rgba(255,255,255,.68);margin:0 0 1.2rem;
+              position:relative;z-index:1;}
+    .hero-chips{display:flex;justify-content:center;gap:.45rem;flex-wrap:wrap;position:relative;z-index:1;}
+    .chip{display:inline-flex;align-items:center;gap:.3rem;
+          background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.22);
+          color:rgba(255,255,255,.92);border-radius:20px;padding:.2rem .72rem;
+          font-size:.75rem;font-weight:600;letter-spacing:.3px;transition:var(--tr);}
+    .chip:hover{background:rgba(255,255,255,.22);}
+
+    .ph{display:flex;align-items:center;gap:.9rem;
+        background:var(--surface);border:1px solid var(--border);
+        border-radius:var(--r);padding:.9rem 1.2rem;margin-bottom:1.1rem;
+        box-shadow:var(--sh0);}
+    .ph-icon{font-size:1.9rem;flex-shrink:0;line-height:1;}
+    .ph-title{font-size:1.25rem;font-weight:800;color:var(--blue);line-height:1.2;}
+    .ph-sub{font-size:.8rem;color:var(--muted);margin-top:.1rem;}
+
+    .stitle{display:flex;align-items:center;font-size:.92rem;font-weight:700;
+            color:var(--blue);padding:.45rem 0 .45rem .75rem;
+            border-left:3px solid var(--blue-l);margin:1rem 0 .6rem;
+            background:linear-gradient(90deg,rgba(59,130,246,.06),transparent);
+            border-radius:0 var(--r) var(--r) 0;}
+
+    .card{background:var(--surface);border-radius:var(--r);
+          border:1px solid var(--border);box-shadow:var(--sh1);
+          padding:1.2rem 1.4rem;margin-bottom:1rem;transition:var(--tr);}
+    .card:hover{box-shadow:var(--sh2);border-color:var(--blue-b);}
+
+    .uzone{background:var(--blue-bg);border:2px dashed #93C5FD;
+           border-radius:var(--r);padding:.85rem 1rem;text-align:center;
+           margin-bottom:.5rem;transition:var(--tr);}
+    .uzone:hover{border-color:var(--blue-l);background:#DBEAFE;}
+    .uzone-icon{font-size:1.5rem;line-height:1;}
+    .uzone-title{font-weight:700;color:var(--blue);font-size:.88rem;margin-top:.2rem;}
+    .uzone-sub{font-size:.75rem;color:var(--muted);margin-top:.1rem;}
+
+    .sbox{padding:.65rem 1rem;border-radius:var(--r);
+          font-size:.88rem;font-weight:500;margin:.4rem 0;}
+    .sbox-ok{background:var(--green-bg);color:#065F46;border-left:3px solid var(--green);}
+    .sbox-warn{background:var(--amber-bg);color:#78350F;border-left:3px solid var(--amber);}
+
+    .lbadge{display:inline-flex;align-items:center;gap:.35rem;
+            background:var(--blue-m);color:#fff;border-radius:var(--r);
+            padding:.3rem .8rem;font-size:.8rem;font-weight:700;margin-top:.45rem;}
+    .lbadge.amber{background:var(--amber);}
+
+    .empty{text-align:center;padding:2.8rem 1rem;color:var(--muted);}
+    .empty-icon{font-size:2.8rem;margin-bottom:.5rem;opacity:.55;}
+    .empty-title{font-size:1rem;font-weight:700;color:#94A3B8;margin-bottom:.25rem;}
+    .empty-sub{font-size:.82rem;color:#CBD5E1;}
+
+    .ipill{display:inline-flex;align-items:center;gap:.35rem;
+           background:var(--blue-bg);border:1px solid var(--blue-b);
+           color:var(--blue);border-radius:20px;padding:.22rem .8rem;
+           font-size:.78rem;font-weight:600;margin-bottom:.5rem;}
+
+    .flabel{font-size:.78rem;font-weight:600;color:var(--muted);
+            text-transform:uppercase;letter-spacing:.5px;margin-bottom:.2rem;}
+
+    .stTabs [data-baseweb="tab-list"]{
+        gap:3px;background:var(--bg);border-radius:var(--r);
+        padding:4px;border:1px solid var(--border);}
+    .stTabs [data-baseweb="tab"]{
+        border-radius:6px;font-weight:600;font-size:.86rem;
+        padding:.4rem .95rem;transition:var(--tr);color:var(--muted);}
+    .stTabs [data-baseweb="tab"]:hover{color:var(--blue-m);background:rgba(59,130,246,.08);}
+    .stTabs [aria-selected="true"]{
+        background:var(--surface)!important;color:var(--blue)!important;
+        box-shadow:var(--sh1)!important;}
+
+    .stButton>button{width:100%;border-radius:var(--r);font-weight:600;
+                     font-size:.86rem;letter-spacing:.1px;transition:var(--tr);}
+    .stButton>button:hover{transform:translateY(-1px);box-shadow:var(--sh2);}
+    .stButton>button:active{transform:translateY(0);box-shadow:var(--sh0);}
+
+    div[data-testid="stRadio"]>div{gap:.45rem;}
+    div[data-testid="stRadio"] label{
+        background:var(--surface);border:1.5px solid var(--border);
+        border-radius:var(--r);padding:.5rem .9rem;cursor:pointer;
+        transition:var(--tr);font-weight:500;font-size:.86rem;}
+    div[data-testid="stRadio"] label:hover{border-color:var(--blue-l);background:var(--blue-bg);}
+
+    .streamlit-expanderHeader{font-weight:600;font-size:.88rem;color:var(--blue);
+                               background:var(--bg);border-radius:6px;padding:.45rem .75rem!important;}
+
+    [data-testid="metric-container"]{
+        background:var(--surface);border:1px solid var(--border);
+        border-radius:var(--r);padding:.7rem .9rem;box-shadow:var(--sh0);transition:var(--tr);}
+    [data-testid="metric-container"]:hover{box-shadow:var(--sh1);border-color:var(--blue-b);}
+    [data-testid="stMetricValue"]{font-size:1.2rem!important;font-weight:700!important;color:var(--blue)!important;}
+    [data-testid="stMetricLabel"]{font-size:.74rem!important;font-weight:600!important;
+                                  color:var(--muted)!important;text-transform:uppercase;letter-spacing:.45px;}
+
+    .stTextInput input,.stNumberInput input{
+        border-radius:var(--r)!important;border:1.5px solid var(--border)!important;
+        font-size:.86rem!important;transition:var(--tr);}
+    .stTextInput input:focus,.stNumberInput input:focus{
+        border-color:var(--blue-l)!important;box-shadow:var(--glow)!important;}
+
+    [data-testid="stDataFrame"],[data-testid="stDataEditor"]{
+        border-radius:var(--r);border:1px solid var(--border)!important;overflow:hidden;}
+
+    hr{border:none;border-top:1px solid var(--border);margin:.9rem 0;}
+
+    @keyframes spin{to{transform:rotate(360deg)}}
+    .spinner{animation:spin 1.2s linear infinite;display:inline-block;}
+    @keyframes fadeUp{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
+    .fade-up{animation:fadeUp .28s ease forwards;}
+
+    /* ── MasterSAF specific ── */
+    .ms-log-area {
+        background: #0d1117;
+        border: 1px solid rgba(255,255,255,0.08);
+        border-radius: 12px;
+        padding: 1rem;
+        font-family: 'JetBrains Mono', monospace;
+        font-size: 0.75rem;
+        color: #e2e8f0;
+        max-height: 400px;
+        overflow-y: auto;
+        white-space: pre-wrap;
+        line-height: 1.5;
+    }
+    .ms-log-area .log-ts { color: #475569; }
+    .ms-log-area .log-ok { color: #22d3a5; }
+    .ms-log-area .log-warn { color: #f59e0b; }
+    .ms-log-area .log-err { color: #ef4444; }
+    .ms-log-area .log-info { color: #3b82f6; }
+    .ms-stat-grid {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 1rem;
+        margin: 1rem 0;
+    }
+    .ms-stat-card {
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: 14px;
+        padding: 1.2rem 1.4rem;
+    }
+    .ms-stat-label {
+        font-size: 0.68rem;
+        font-weight: 600;
+        color: var(--muted);
+        text-transform: uppercase;
+        letter-spacing: 0.12em;
+        margin-bottom: 0.5rem;
+    }
+    .ms-stat-value {
+        font-family: 'JetBrains Mono', monospace;
+        font-size: 1.5rem;
+        font-weight: 600;
+        color: var(--green);
+        line-height: 1;
+    }
+    .ms-stat-sub {
+        font-size: 0.72rem;
+        color: var(--muted);
+        margin-top: 0.3rem;
+    }
+
+    @media(max-width:900px){
+        .hero{padding:1.8rem 1.4rem 1.5rem;}
+        .hero-title{font-size:1.55rem;}
+        .hero-logo{max-width:140px;}
+        .ms-stat-grid { grid-template-columns: repeat(2, 1fr); }
+    }
+    @media(max-width:600px){
+        .hero-title{font-size:1.3rem;}
+        .hero{padding:1.3rem 1rem 1.1rem;border-radius:var(--r-lg);}
+        .stTabs [data-baseweb="tab"]{padding:.32rem .55rem;font-size:.78rem;}
+        .chip{font-size:.68rem;padding:.15rem .55rem;}
+    }
+    </style>""")
+
+
+# ==============================================================================
+# PARTE 1 — PROCESSADOR TXT
+# ==============================================================================
+def processador_txt():
+    page_header("📄", "Processador de Arquivos TXT",
+                "Remova linhas indesejadas e substitua padrões em arquivos TXT")
+
+    def detectar_encoding(conteudo):
+        return chardet.detect(conteudo)['encoding']
+
+    def processar_arquivo(conteudo, padroes):
+        try:
+            substituicoes = {
+                "IMPOSTO IMPORTACAO": "IMP IMPORT",
+                "TAXA SICOMEX": "TX SISCOMEX",
+                "FRETE INTERNACIONAL": "FRET INTER",
+                "SEGURO INTERNACIONAL": "SEG INTERN",
+            }
+            encoding = detectar_encoding(conteudo)
             try:
-                if proc.info['name'] and any(name in proc.info['name'].lower() 
-                    for name in ['chrome', 'chromium', 'chromedriver']):
-                    os.kill(proc.info['pid'], signal.SIGKILL)
-            except:
-                pass
-        time.sleep(2)
-    except:
-        pass
+                texto = conteudo.decode(encoding)
+            except UnicodeDecodeError:
+                texto = conteudo.decode('latin-1')
+            linhas = texto.splitlines()
+            out = []
+            for linha in linhas:
+                linha = linha.strip()
+                if not any(p in linha for p in padroes):
+                    for orig, sub in substituicoes.items():
+                        linha = linha.replace(orig, sub)
+                    out.append(linha)
+            return "\n".join(out), len(linhas)
+        except Exception as e:
+            st.error(f"Erro ao processar: {str(e)}")
+            return None, 0
 
-# ─────────────────────────────────────────────
-# CTeProcessor
-# ─────────────────────────────────────────────
+    padroes_default = ["-------", "SPED EFD-ICMS/IPI"]
+
+    col_up, col_cfg = st.columns([3, 2], gap="large")
+
+    with col_up:
+        ph('<p class="flabel">📁 Selecione o arquivo TXT</p>')
+        arquivo = st.file_uploader("Selecione o arquivo TXT", type=['txt'])
+
+    with col_cfg:
+        with st.expander("⚙️ Padrões adicionais de remoção"):
+            padroes_add = st.text_input("Padrões (vírgula)", placeholder="Ex: TOTAL, SOMA")
+            padroes = padroes_default + [
+                p.strip() for p in padroes_add.split(",") if p.strip()
+            ] if padroes_add else padroes_default
+        ph(f'<div class="ipill">🔍 {len(padroes)} padrões ativos</div>')
+
+    if arquivo is not None:
+        st.markdown("")
+        if st.button("🔄 Processar Arquivo TXT", type="primary", use_container_width=True):
+            try:
+                show_loading_animation("Analisando arquivo...")
+                conteudo = arquivo.read()
+                show_processing_animation("Processando linhas...")
+                resultado, total = processar_arquivo(conteudo, padroes)
+                if resultado is not None:
+                    show_success_animation("Processamento concluído!")
+                    mantidas  = len(resultado.splitlines())
+                    removidas = total - mantidas
+                    k1, k2, k3 = st.columns(3)
+                    k1.metric("📋 Originais",  total)
+                    k2.metric("✅ Mantidas",   mantidas)
+                    k3.metric("🗑️ Removidas",  removidas,
+                              delta=f"-{removidas}", delta_color="inverse")
+                    section_title("👁️ Prévia")
+                    st.text_area("Conteúdo processado", resultado, height=260)
+                    buf = BytesIO()
+                    buf.write(resultado.encode('utf-8'))
+                    buf.seek(0)
+                    st.download_button("⬇️ Baixar arquivo processado", data=buf,
+                                       file_name=f"processado_{arquivo.name}",
+                                       mime="text/plain", use_container_width=True)
+            except Exception as e:
+                st.error(f"Erro: {str(e)}")
+    else:
+        empty_state("📂", "Nenhum arquivo carregado",
+                    "Selecione um arquivo .TXT acima para começar")
+
+
+# ==============================================================================
+# PARTE 2 — MASTERSAF AUTOMAÇÃO XML (SUBSTITUI O PROCESSADOR CT-E)
+# ==============================================================================
+
+# ── NAMESPACES CT-e ─────────────────────────────────────────────────
+CTE_NAMESPACES = {'cte': 'http://www.portalfiscal.inf.br/cte'}
+
+# ── CTeProcessor (mantido internamente para processar os XMLs baixados) ──
 class CTeProcessor:
     def __init__(self):
         self.processed_data = []
@@ -564,7 +594,7 @@ class CTeProcessor:
             with zipfile.ZipFile(io.BytesIO(zip_bytes)) as zf:
                 xml_names = [n for n in zf.namelist() if n.lower().endswith('.xml')]
                 if log_fn:
-                    log_fn(f"      📄 {len(xml_names)} XML(s) no ZIP")
+                    log_fn(f"📄 {len(xml_names)} XML(s) no ZIP", 'info')
                 for name in xml_names:
                     try:
                         content = zf.read(name).decode('utf-8', errors='replace')
@@ -576,16 +606,16 @@ class CTeProcessor:
                         pass
         except Exception as e:
             if log_fn:
-                log_fn(f"      ❌ Erro ao ler ZIP: {e}")
+                log_fn(f"❌ Erro ao ler ZIP: {e}", 'err')
 
     def process_directory(self, directory, log_fn=None):
         base = Path(directory)
         zip_files = list(base.glob('*.zip'))
         if log_fn:
-            log_fn(f"🔍 {len(zip_files)} ZIP(s) encontrado(s)")
+            log_fn(f"🔍 {len(zip_files)} ZIP(s) encontrado(s)", 'info')
         for zp in zip_files:
             if log_fn:
-                log_fn(f"   📦 Processando {zp.name}...")
+                log_fn(f"📦 Processando {zp.name}...", 'info')
             with open(zp, 'rb') as f:
                 self.process_zip_bytes(f.read(), log_fn)
         for xf in base.glob('*.xml'):
@@ -636,625 +666,2016 @@ class CTeProcessor:
             'emitentes':   df['Emitente'].nunique(),
         }
 
-# ─────────────────────────────────────────────
-# GERENCIAMENTO DO CHROMEDRIVER (ROBUSTO)
-# ─────────────────────────────────────────────
-def find_chrome_binary():
-    """Encontra o binário do Chrome/Chromium instalado"""
-    for binary in ['/usr/bin/chromium', '/usr/bin/google-chrome', '/usr/bin/google-chrome-stable', '/usr/bin/chromium-browser']:
-        if os.path.exists(binary):
-            return binary
-    return None
 
+# ── FUNÇÕES DO WEBDRIVER ──────────────────────────────────────────
 def get_chrome_version():
-    """Obtém a versão principal do Chrome/Chromium"""
-    binary = find_chrome_binary()
-    if not binary:
-        return None
-    
+    """Detecta a versão do Chrome/Chromium instalada"""
     try:
-        result = subprocess.run([binary, '--version'], capture_output=True, text=True, timeout=5)
+        result = subprocess.run(['chromium', '--version'], capture_output=True, text=True)
         if result.returncode == 0:
-            version_text = result.stdout.strip()
-            match = re.search(r'(\d+)\.', version_text)
-            if match:
-                major_version = int(match.group(1))
-                return major_version
+            return result.stdout.strip()
     except:
         pass
-    
+    try:
+        result = subprocess.run(['google-chrome', '--version'], capture_output=True, text=True)
+        if result.returncode == 0:
+            return result.stdout.strip()
+    except:
+        pass
+    try:
+        result = subprocess.run(['google-chrome-stable', '--version'], capture_output=True, text=True)
+        if result.returncode == 0:
+            return result.stdout.strip()
+    except:
+        pass
     return None
 
-def download_chromedriver_chrome_for_testing(chrome_version):
-    """Baixa o ChromeDriver da API Chrome for Testing (Chrome 115+)"""
+def get_driver(download_path):
+    """Cria e retorna uma instância do WebDriver configurada corretamente"""
+    opts = Options()
+    opts.add_argument("--headless=new")
+    opts.add_argument("--window-size=1920,1080")
+    opts.add_argument("--no-sandbox")
+    opts.add_argument("--disable-dev-shm-usage")
+    opts.add_argument("--disable-gpu")
+    opts.add_argument("--disable-software-rasterizer")
+    opts.add_argument("--disable-extensions")
+    opts.add_argument("--disable-infobars")
+    opts.add_argument("--disable-notifications")
+    opts.add_argument("--disable-popup-blocking")
+    opts.add_argument("--disable-blink-features=AutomationControlled")
+    opts.add_experimental_option("excludeSwitches", ["enable-automation"])
+    opts.add_experimental_option('useAutomationExtension', False)
+
+    prefs = {
+        "download.default_directory": download_path,
+        "download.prompt_for_download": False,
+        "download.directory_upgrade": True,
+        "safebrowsing.enabled": True,
+        "profile.default_content_setting_values.automatic_downloads": 1,
+        "credentials_enable_service": False,
+        "profile.password_manager_enabled": False
+    }
+    opts.add_experimental_option("prefs", prefs)
+
     try:
-        api_url = "https://googlechromelabs.github.io/chrome-for-testing/latest-versions-per-milestone-with-downloads.json"
-        add_log(f"🌐 Buscando ChromeDriver para Chrome v{chrome_version}...")
-        
-        response = requests.get(api_url, timeout=15)
-        data = response.json()
-        
-        version_key = str(chrome_version)
-        if version_key not in data.get('milestones', {}):
-            add_log(f"⚠️ Versão {chrome_version} não encontrada, tentando versão mais próxima...")
-            # Tenta versões próximas
-            for v in range(chrome_version - 2, chrome_version + 3):
-                if str(v) in data.get('milestones', {}):
-                    version_key = str(v)
-                    break
-        
-        if version_key not in data.get('milestones', {}):
-            return None
-        
-        downloads = data['milestones'][version_key]['downloads'].get('chromedriver', [])
-        download_url = None
-        for d in downloads:
-            if d['platform'] == 'linux64':
-                download_url = d['url']
-                break
-        
-        if not download_url:
-            return None
-        
-        add_log(f"📥 Baixando ChromeDriver...")
-        response = requests.get(download_url, timeout=120)
-        
-        driver_dir = tempfile.mkdtemp(prefix="cd_")
-        zip_path = os.path.join(driver_dir, "cd.zip")
-        
-        with open(zip_path, 'wb') as f:
-            f.write(response.content)
-        
-        with zipfile.ZipFile(zip_path, 'r') as zip_ref:
-            zip_ref.extractall(driver_dir)
-        
-        for root, dirs, files in os.walk(driver_dir):
-            for file in files:
-                if file == 'chromedriver':
-                    driver_path = os.path.join(root, file)
-                    os.chmod(driver_path, 0o755)
-                    return driver_path
-        
-        return None
-        
-    except Exception as e:
-        add_log(f"❌ Erro download: {str(e)[:80]}")
-        return None
-
-def create_driver_with_retry(download_path, max_retries=3):
-    """Cria o driver com tentativas e recuperação"""
-    
-    chrome_binary = find_chrome_binary()
-    if not chrome_binary:
-        raise Exception("Chrome/Chromium não encontrado")
-    
-    chrome_version = get_chrome_version()
-    if not chrome_version:
-        raise Exception("Versão do Chrome não detectada")
-    
-    for attempt in range(max_retries):
+        from webdriver_manager.chrome import ChromeDriverManager
+        service = Service(ChromeDriverManager().install())
+        driver = webdriver.Chrome(service=service, options=opts)
+        return driver
+    except Exception:
         try:
-            if attempt > 0:
-                add_log(f"🔄 Tentativa {attempt + 1}/{max_retries} de criar driver...")
-                kill_chrome_processes()
-                time.sleep(3)
-            
-            opts = Options()
-            opts.binary_location = chrome_binary
-            opts.add_argument("--headless=new")
-            opts.add_argument("--window-size=1920,1080")
-            opts.add_argument("--no-sandbox")
-            opts.add_argument("--disable-dev-shm-usage")
-            opts.add_argument("--disable-gpu")
-            opts.add_argument("--disable-software-rasterizer")
-            opts.add_argument("--disable-extensions")
-            opts.add_argument("--disable-infobars")
-            opts.add_argument("--disable-notifications")
-            opts.add_argument("--disable-popup-blocking")
-            opts.add_argument("--disable-blink-features=AutomationControlled")
-            opts.add_argument("--disable-web-security")
-            opts.add_argument("--disable-features=VizDisplayCompositor")
-            opts.add_argument("--disable-background-networking")
-            opts.add_argument("--disable-sync")
-            opts.add_argument("--disable-default-apps")
-            opts.add_argument("--disable-translate")
-            opts.add_argument("--metrics-recording-only")
-            opts.add_argument("--mute-audio")
-            opts.add_argument("--no-first-run")
-            opts.add_argument("--safebrowsing-disable-auto-update")
-            
-            # Configurar memória para evitar crashes
-            opts.add_argument("--max_old_space_size=4096")
-            opts.add_argument("--disable-javascript-harmony-shipping")
-            opts.add_argument("--js-flags=--max-old-space-size=4096")
-            
-            opts.add_experimental_option("excludeSwitches", ["enable-automation"])
-            opts.add_experimental_option('useAutomationExtension', False)
-            
-            prefs = {
-                "download.default_directory": download_path,
-                "download.prompt_for_download": False,
-                "download.directory_upgrade": True,
-                "safebrowsing.enabled": True,
-                "profile.default_content_setting_values.automatic_downloads": 1,
-                "credentials_enable_service": False,
-                "profile.password_manager_enabled": False
-            }
-            opts.add_experimental_option("prefs", prefs)
-            
-            # Tentar chromedriver do sistema primeiro
-            system_drivers = ['/usr/bin/chromedriver', '/usr/lib/chromium-browser/chromedriver']
-            for driver_path in system_drivers:
-                if os.path.exists(driver_path):
-                    try:
-                        service = Service(executable_path=driver_path)
-                        driver = webdriver.Chrome(service=service, options=opts)
-                        return driver
-                    except:
-                        continue
-            
-            # Baixar driver compatível
-            driver_path = download_chromedriver_chrome_for_testing(chrome_version)
-            if driver_path:
-                service = Service(executable_path=driver_path)
-                driver = webdriver.Chrome(service=service, options=opts)
+            service = Service('/usr/bin/chromedriver')
+            driver = webdriver.Chrome(service=service, options=opts)
+            return driver
+        except Exception:
+            try:
+                driver = webdriver.Chrome(options=opts)
                 return driver
-            else:
-                raise Exception("Não foi possível obter o ChromeDriver")
-                
-        except Exception as e:
-            add_log(f"⚠️ Tentativa {attempt + 1} falhou: {str(e)[:80]}")
-            if attempt == max_retries - 1:
-                raise
-    
-    raise Exception("Falha ao criar driver após múltiplas tentativas")
+            except Exception:
+                opts.binary_location = "/usr/bin/chromium"
+                driver = webdriver.Chrome(options=opts)
+                return driver
 
-def esperar_downloads(directory, timeout=180):
-    """Aguarda downloads terminarem com timeout estendido"""
+def esperar_downloads(directory, timeout=120):
+    """Aguarda até que todos os downloads sejam concluídos"""
     start = time.time()
     while time.time() - start < timeout:
-        crdownloads = list(Path(directory).glob('*.crdownload'))
-        if not crdownloads:
-            # Verificar se tem arquivos ZIP
-            zips = list(Path(directory).glob('*.zip'))
-            if zips:
-                return True
-        time.sleep(2)
-    return len(list(Path(directory).glob('*.zip'))) > 0
+        if not list(Path(directory).glob('*.crdownload')):
+            return True
+        time.sleep(1)
+    return False
 
-# ─────────────────────────────────────────────
-# NAV BAR
-# ─────────────────────────────────────────────
-st.markdown("""
-<div class="nav-bar">
-    <div class="nav-logo">MASTER<em>SAF</em> <span style="color:#334155;font-weight:300;">//</span></div>
-    <div class="nav-badge">⚡ AUTOMAÇÃO FISCAL v3 — MODO LONGA DURAÇÃO</div>
-</div>
-""", unsafe_allow_html=True)
+def add_ms_log(msg, level='info'):
+    """Adiciona mensagem ao log da sessão do MasterSAF"""
+    ts = datetime.now().strftime("%H:%M:%S")
+    st.session_state.ms_logs.append({
+        'ts': ts,
+        'msg': msg,
+        'level': level
+    })
 
-# ─────────────────────────────────────────────
-# HERO
-# ─────────────────────────────────────────────
-st.markdown("""
-<div class="hero-wrap">
-    <div class="hero-eyebrow">Sistema de Automação CT-e</div>
-    <h1 class="hero-h1">Download e <span>processamento</span><br>de XMLs em massa</h1>
-    <p class="hero-sub">
-        Motor otimizado para processar <strong>1000+ páginas sem interrupções</strong>.
-        Sistema de recuperação automática contra falhas de rede e memória.
-    </p>
-</div>
-""", unsafe_allow_html=True)
+def render_ms_log():
+    """Renderiza o log formatado do MasterSAF"""
+    logs = st.session_state.ms_logs[-40:]
+    html_parts = ['<div class="ms-log-area">']
+    for entry in logs:
+        cls = f"log-{entry['level']}"
+        html_parts.append(f'<span class="log-ts">[{entry["ts"]}]</span> <span class="{cls}">{entry["msg"]}</span>')
+    html_parts.append('</div>')
+    ph('\n'.join(html_parts))
 
-# ─────────────────────────────────────────────
-# FORMULÁRIO — GRID 2 COLUNAS
-# ─────────────────────────────────────────────
-st.markdown('<div class="main-grid">', unsafe_allow_html=True)
 
-col_a, col_b = st.columns(2, gap="large")
+# ── UI MASTERSAF AUTOMAÇÃO ────────────────────────────────────────
+def mastersaf_automacao():
+    page_header("⚡", "MasterSAF — Automação XML",
+                "Download e processamento em massa de CT-es direto do portal")
 
-with col_a:
-    st.markdown('<div class="card"><div class="card-title">🔑 Credenciais de Acesso</div>', unsafe_allow_html=True)
-    usuario = st.text_input("Usuário", placeholder="login@empresa.com.br", key="usuario")
-    senha   = st.text_input("Senha",   type="password", placeholder="••••••••", key="senha")
-    st.markdown('</div>', unsafe_allow_html=True)
+    # ── Sub-tabs ───────────────────────────────────────────────
+    tab_exec, tab_resultados, tab_export = st.tabs([
+        "🚀  Executar Automação",
+        "📊  Resultados & Análise",
+        "📥  Exportar Dados",
+    ])
 
-    st.markdown('<div class="card" style="margin-top:1.5rem"><div class="card-title">📅 Período de Busca</div>', unsafe_allow_html=True)
-    p1, p2 = st.columns(2)
-    with p1:
-        data_ini = st.text_input("Data Inicial", value="08/05/2026", key="dt_ini")
-    with p2:
-        data_fin = st.text_input("Data Final",   value="08/05/2026", key="dt_fin")
-    st.markdown('</div>', unsafe_allow_html=True)
+    # ════════════════════════════════════════════════════════════
+    # TAB EXECUTAR
+    # ════════════════════════════════════════════════════════════
+    with tab_exec:
+        section_title("⚙️ Configuração da Automação")
 
-with col_b:
-    st.markdown('<div class="card"><div class="card-title">⚙️ Parâmetros de Execução</div>', unsafe_allow_html=True)
-    qtd_loops = st.number_input(
-        "Quantidade de Páginas",
-        min_value=1, max_value=5000, value=1000,
-        help="Para 1000 páginas, estimativa de 4-6 horas de execução."
-    )
-    
-    intervalo_seguranca = st.number_input(
-        "Intervalo entre páginas (segundos)",
-        min_value=1, max_value=30, value=8,
-        help="Maior intervalo = mais estabilidade. Recomendado: 8-10s para 1000+ páginas."
-    )
-    
-    st.markdown("<br>", unsafe_allow_html=True)
-    gerar_excel = st.checkbox("Gerar Excel consolidado dos CT-es", value=True)
-    gerar_zip   = st.checkbox("Disponibilizar ZIP com XMLs brutos", value=True)
-    st.markdown('</div>', unsafe_allow_html=True)
+        col_a, col_b = st.columns(2, gap="large")
 
-    st.markdown('<div class="card" style="margin-top:1.5rem"><div class="card-title">🚀 Controle de Execução</div>', unsafe_allow_html=True)
-    
-    col_btn1, col_btn2 = st.columns(2)
-    with col_btn1:
-        iniciar = st.button("⚡ Iniciar Automação", key="btn_iniciar", disabled=st.session_state.execucao_ativa)
-    with col_btn2:
-        parar = st.button("🛑 Parar Execução", key="btn_parar", disabled=not st.session_state.execucao_ativa)
-    
-    if st.session_state.execucao_ativa:
-        st.markdown('<span class="safety-badge safety-ok">🟢 SISTEMA EM EXECUÇÃO</span>', unsafe_allow_html=True)
-    else:
-        st.markdown('<span class="safety-badge safety-warn">⚪ SISTEMA EM ESPERA</span>', unsafe_allow_html=True)
-    
-    st.markdown('</div>', unsafe_allow_html=True)
+        with col_a:
+            with st.container():
+                ph('<div class="card"><div class="flabel">🔑 Credenciais de Acesso</div>')
+                usuario = st.text_input("Usuário", placeholder="login@empresa.com.br", key="ms_usuario")
+                senha   = st.text_input("Senha",   type="password", placeholder="••••••••", key="ms_senha")
+                ph('</div>')
 
-st.markdown('</div>', unsafe_allow_html=True)
+            with st.container():
+                ph('<div class="card" style="margin-top:1.5rem"><div class="flabel">📅 Período de Busca</div>')
+                p1, p2 = st.columns(2)
+                with p1:
+                    data_ini = st.text_input("Data Inicial", value="08/05/2026", key="ms_dt_ini")
+                with p2:
+                    data_fin = st.text_input("Data Final",   value="08/05/2026", key="ms_dt_fin")
+                ph('</div>')
 
-# ─────────────────────────────────────────────
-# EXECUÇÃO PRINCIPAL (OTIMIZADA PARA 1000+ PÁGINAS)
-# ─────────────────────────────────────────────
-if iniciar and not st.session_state.execucao_ativa:
-    if not usuario or not senha:
-        st.error("⚠️ Preencha o usuário e a senha para continuar.")
-    else:
-        st.session_state.execucao_ativa = True
-        st.session_state.ms_logs = []
-        st.session_state.progresso_atual = 0
-        
-        dl_path = tempfile.mkdtemp(prefix="mastersaf_")
-        st.session_state.download_path = dl_path
+        with col_b:
+            with st.container():
+                ph('<div class="card"><div class="flabel">⚙️ Parâmetros de Execução</div>')
+                qtd_loops = st.number_input(
+                    "Quantidade de Páginas (Loops)",
+                    min_value=1, max_value=1000, value=5,
+                    help="Cada loop processa uma página de até 200 CT-es.",
+                    key="ms_qtd_loops"
+                )
+                gerar_excel = st.checkbox("Gerar Excel consolidado dos CT-es", value=True, key="ms_gerar_excel")
+                gerar_zip   = st.checkbox("Disponibilizar ZIP com XMLs brutos", value=True, key="ms_gerar_zip")
+                ph('</div>')
 
-        st.markdown('<div class="divider"><hr></div>', unsafe_allow_html=True)
-        st.markdown("""
-        <div class="exec-wrap">
-            <div class="exec-header"><span class="dot"></span>Execução em Tempo Real — Modo Longa Duração</div>
-        </div>
-        """, unsafe_allow_html=True)
+            with st.container():
+                ph('<div class="card" style="margin-top:1.5rem"><div class="flabel">🚀 Executar</div>')
+                ph("""
+                <p style="font-size:0.82rem;color:var(--muted);margin-bottom:1rem;line-height:1.6;">
+                    O navegador será executado em <strong style="color:var(--blue-m)">modo headless</strong> (invisível).
+                    Você pode acompanhar o progresso abaixo em tempo real.
+                </p>
+                """)
+                iniciar = st.button("⚡  Iniciar Automação", key="ms_btn_iniciar", type="primary")
+                ph('</div>')
 
-        # Placeholders para UI
-        status_placeholder = st.empty()
-        progress_placeholder = st.empty()
-        log_placeholder = st.empty()
-        stats_placeholder = st.empty()
-        
-        driver = None
-        total_paginas_processadas = 0
-        reinicios_driver = 0
-        MAX_REINICIOS = 5
-        PAGINAS_POR_SESSAO = 50  # Reiniciar driver a cada 50 páginas
-        
-        def update_ui():
-            """Atualiza todos os elementos da UI"""
-            with status_placeholder.container():
-                if st.session_state.execucao_ativa:
-                    st.info(f"⏳ Processando... {total_paginas_processadas} de {int(qtd_loops)} páginas | Driver reiniciado {reinicios_driver}x")
-            
-            with progress_placeholder.container():
-                if int(qtd_loops) > 0:
-                    st.progress(min(total_paginas_processadas / int(qtd_loops), 1.0))
-            
-            with log_placeholder.container():
-                st.code("\n".join(st.session_state.ms_logs[-40:]), language=None)
-        
-        def executar_ciclo_download(driver, pagina_atual, total_paginas):
-            """Executa um ciclo de download para uma página"""
-            try:
-                # Selecionar todos os checkboxes
+        # ── Execução ──────────────────────────────────────────
+        if iniciar:
+            if not usuario or not senha:
+                st.error("⚠️ Preencha o usuário e a senha para continuar.")
+            else:
+                # Limpa logs e dados anteriores
+                st.session_state.ms_logs = []
+                st.session_state.ms_processed_data = []
+
+                dl_path = tempfile.mkdtemp(prefix="mastersaf_web_")
+                st.session_state.ms_download_path = dl_path
+
+                st.divider()
+                section_title("📋 Log de Execução")
+                status_box   = st.info("⏳ Inicializando ambiente e navegador...")
+                progress_bar = st.progress(0)
+                log_placeholder = st.empty()
+
+                driver = None
+                processor = CTeProcessor()
+
                 try:
-                    cb = WebDriverWait(driver, 10).until(
-                        EC.element_to_be_clickable((By.XPATH, '//*[@id="jqgh_listagem_checkBox"]/div/input'))
+                    chrome_version = get_chrome_version()
+                    if chrome_version:
+                        add_ms_log(f"📊 Versão do navegador: {chrome_version}", 'info')
+
+                    add_ms_log("🌐 Iniciando Chrome em modo headless...", 'info')
+                    driver = get_driver(dl_path)
+                    log_placeholder.markdown(
+                        '\n'.join([f"[{e['ts']}] {e['msg']}" for e in st.session_state.ms_logs[-15:]]),
                     )
-                    if not cb.is_selected():
-                        cb.click()
-                    time.sleep(2)
-                except:
-                    add_log(f"   ⚠️ Checkbox não encontrado na página {pagina_atual}")
-                    return False
-                
-                # Iniciar download em massa
-                try:
-                    btn_xml = WebDriverWait(driver, 10).until(
-                        EC.element_to_be_clickable((By.XPATH, '//*[@id="xml_multiplos"]/h3'))
-                    )
-                    driver.execute_script("arguments[0].click();", btn_xml)
-                    time.sleep(2)
-                    
-                    btn_download = WebDriverWait(driver, 10).until(
-                        EC.element_to_be_clickable((By.XPATH, '//*[@id="downloadEmMassaXml"]'))
-                    )
-                    driver.execute_script("arguments[0].click();", btn_download)
-                    add_log(f"   📥 Download página {pagina_atual} iniciado")
-                except:
-                    add_log(f"   ⚠️ Botão download não encontrado na página {pagina_atual}")
-                    return False
-                
-                # Aguardar download
-                if esperar_downloads(dl_path, timeout=180):
-                    add_log(f"   ✅ Página {pagina_atual} concluída")
-                    time.sleep(1)
-                    
-                    # Desmarcar checkbox
-                    try:
-                        cb = driver.find_element(By.XPATH, '//*[@id="jqgh_listagem_checkBox"]/div/input')
-                        if cb.is_selected():
-                            cb.click()
-                    except:
-                        pass
-                    
-                    return True
-                else:
-                    add_log(f"   ⚠️ Timeout no download da página {pagina_atual}")
-                    return False
-                    
-            except Exception as e:
-                add_log(f"   ❌ Erro na página {pagina_atual}: {str(e)[:80]}")
-                return False
-        
-        try:
-            update_ui()
-            
-            # Criar driver inicial
-            add_log("🚀 Inicializando navegador...")
-            driver = create_driver_with_retry(dl_path)
-            update_ui()
-            
-            # Login
-            add_log("🔑 Realizando login...")
-            driver.get("https://p.dfe.mastersaf.com.br/mvc/login")
-            time.sleep(5)
-            
-            driver.find_element(By.XPATH, '//*[@id="nomeusuario"]').send_keys(usuario)
-            driver.find_element(By.XPATH, '//*[@id="senha"]').send_keys(senha)
-            driver.find_element(By.XPATH, '//*[@id="enter"]').click()
-            time.sleep(5)
-            add_log("✅ Login realizado")
-            update_ui()
-            
-            # Navegar para listagem
-            add_log("📋 Acessando listagem de CT-es...")
-            driver.execute_script("arguments[0].click();",
-                driver.find_element(By.XPATH, '//*[@id="linkListagemReceptorCTEs"]/a'))
-            time.sleep(5)
-            update_ui()
-            
-            # Configurar datas
-            add_log(f"📅 Período: {data_ini} → {data_fin}")
-            for xpath, val in [
-                ('//*[@id="consultaDataInicial"]', data_ini),
-                ('//*[@id="consultaDataFinal"]', data_fin),
-            ]:
-                el = driver.find_element(By.XPATH, xpath)
-                el.clear()
-                el.send_keys(val)
-            time.sleep(2)
-            
-            # Atualizar listagem
-            driver.find_element(By.XPATH, '//*[@id="listagem_atualiza"]').click()
-            time.sleep(5)
-            
-            # Configurar 200 itens
-            try:
-                sel = driver.find_element(By.XPATH, '//*[@id="plistagem_center"]/table/tbody/tr/td[8]/select')
-                sel.click()
-                time.sleep(1)
-                sel.find_element(By.XPATH, './/option[@value="200"]').click()
-                time.sleep(3)
-                add_log("⚙️ Configurado 200 itens/página")
-            except:
-                add_log("⚠️ Não foi possível configurar 200 itens/página")
-            
-            update_ui()
-            
-            # Loop principal
-            pagina = 0
-            while pagina < int(qtd_loops) and st.session_state.execucao_ativa:
-                
-                # Verificar se precisa reiniciar o driver
-                if pagina > 0 and pagina % PAGINAS_POR_SESSAO == 0:
-                    add_log(f"🔄 Reiniciando driver (página {pagina})...")
-                    try:
-                        driver.quit()
-                    except:
-                        pass
-                    kill_chrome_processes()
-                    time.sleep(5)
-                    driver = create_driver_with_retry(dl_path)
-                    reinicios_driver += 1
-                    
-                    # Refazer login e navegação
+
+                    status_box.info("🔑 Autenticando no MasterSAF...")
+                    add_ms_log("🔗 Acessando https://p.dfe.mastersaf.com.br/mvc/login", 'info')
                     driver.get("https://p.dfe.mastersaf.com.br/mvc/login")
                     time.sleep(3)
+
                     driver.find_element(By.XPATH, '//*[@id="nomeusuario"]').send_keys(usuario)
                     driver.find_element(By.XPATH, '//*[@id="senha"]').send_keys(senha)
-                    driver.find_element(By.XPATH, '//*[@id="enter"]').click()
+                    driver.execute_script("arguments[0].click();",
+                        driver.find_element(By.XPATH, '//*[@id="enter"]'))
                     time.sleep(5)
+                    add_ms_log("✅ Login realizado com sucesso", 'ok')
+                    progress_bar.progress(0.05)
+                    log_placeholder.markdown(
+                        '\n'.join([f"[{e['ts']}] {e['msg']}" for e in st.session_state.ms_logs[-15:]]),
+                    )
+
+                    status_box.info("📋 Navegando até Listagem de CT-es...")
                     driver.execute_script("arguments[0].click();",
                         driver.find_element(By.XPATH, '//*[@id="linkListagemReceptorCTEs"]/a'))
                     time.sleep(5)
-                    
-                    # Reconfigurar
+                    add_ms_log("📋 Módulo Listagem Receptor CT-es acessado", 'info')
+                    progress_bar.progress(0.08)
+                    log_placeholder.markdown(
+                        '\n'.join([f"[{e['ts']}] {e['msg']}" for e in st.session_state.ms_logs[-15:]]),
+                    )
+
+                    add_ms_log(f"📅 Definindo período: {data_ini} → {data_fin}", 'info')
                     for xpath, val in [
                         ('//*[@id="consultaDataInicial"]', data_ini),
-                        ('//*[@id="consultaDataFinal"]', data_fin),
+                        ('//*[@id="consultaDataFinal"]',   data_fin),
                     ]:
                         el = driver.find_element(By.XPATH, xpath)
-                        el.clear()
+                        el.click()
+                        el.send_keys(Keys.CONTROL, 'a')
+                        el.send_keys(Keys.BACKSPACE)
                         el.send_keys(val)
-                    time.sleep(2)
-                    driver.find_element(By.XPATH, '//*[@id="listagem_atualiza"]').click()
-                    time.sleep(5)
-                    
-                    # Navegar até a página atual
-                    for _ in range(pagina):
-                        try:
-                            driver.find_element(By.XPATH, '//*[@id="next_plistagem"]/span').click()
-                            time.sleep(3)
-                        except:
-                            break
-                
-                # Processar página atual
-                add_log(f"━━━ Página {pagina + 1}/{int(qtd_loops)} ━━━")
-                update_ui()
-                
-                sucesso = executar_ciclo_download(driver, pagina + 1, int(qtd_loops))
-                
-                if sucesso:
-                    total_paginas_processadas += 1
-                
-                # Intervalo de segurança
-                add_log(f"⏸️ Aguardando {int(intervalo_seguranca)}s...")
-                update_ui()
-                
-                for _ in range(int(intervalo_seguranca)):
-                    if not st.session_state.execucao_ativa:
-                        break
                     time.sleep(1)
-                
-                # Próxima página
-                if pagina < int(qtd_loops) - 1 and st.session_state.execucao_ativa:
-                    try:
-                        next_btn = WebDriverWait(driver, 10).until(
-                            EC.element_to_be_clickable((By.XPATH, '//*[@id="next_plistagem"]/span'))
-                        )
-                        next_btn.click()
-                        time.sleep(3)
-                        pagina += 1
-                    except:
-                        add_log("⚠️ Não foi possível avançar para próxima página")
-                        break
-                else:
-                    pagina += 1
-                
-                update_ui()
-            
-            # Finalização
-            if driver:
-                try:
-                    driver.quit()
-                except:
-                    pass
-            kill_chrome_processes()
-            
-            add_log(f"✅ Downloads concluídos! {total_paginas_processadas} páginas processadas")
-            st.session_state.execucao_ativa = False
-            update_ui()
-            
-            # Processamento dos XMLs
-            processor = CTeProcessor()
-            zip_found = list(Path(dl_path).glob('*.zip'))
-            add_log(f"📊 {len(zip_found)} arquivos ZIP encontrados")
-            
-            if gerar_excel and zip_found:
-                processor.process_directory(dl_path, add_log)
-                add_log(f"📊 Total CT-es processados: {len(processor.processed_data)}")
-            
-            # Gerar ZIP de saída
-            zip_buf = None
-            if gerar_zip and zip_found:
-                buf_io = io.BytesIO()
-                with zipfile.ZipFile(buf_io, 'w', zipfile.ZIP_DEFLATED) as zipf:
-                    for root_dir, _, files in os.walk(dl_path):
-                        for file in files:
-                            zipf.write(os.path.join(root_dir, file), file)
-                buf_io.seek(0)
-                zip_buf = buf_io.getvalue()
-            
-            update_ui()
-            
-            # Exibir estatísticas
-            if gerar_excel and processor.processed_data:
-                summ = processor.summary()
-                with stats_placeholder.container():
-                    st.markdown('<div class="divider"><hr></div>', unsafe_allow_html=True)
-                    st.markdown(f"""
-                    <div class="stat-grid">
-                        <div class="stat-card">
-                            <div class="stat-label">Páginas Processadas</div>
-                            <div class="stat-value">{total_paginas_processadas:,}</div>
-                            <div class="stat-sub">de {int(qtd_loops)} planejadas</div>
-                        </div>
-                        <div class="stat-card">
-                            <div class="stat-label">CT-es Extraídos</div>
-                            <div class="stat-value">{summ['total']:,}</div>
-                            <div class="stat-sub">documentos fiscais</div>
-                        </div>
-                        <div class="stat-card">
-                            <div class="stat-label">Peso Bruto Total</div>
-                            <div class="stat-value">{summ['peso_total']:,.0f}</div>
-                            <div class="stat-sub">quilogramas</div>
-                        </div>
-                        <div class="stat-card">
-                            <div class="stat-label">Valor Total</div>
-                            <div class="stat-value">R$ {summ['valor_total']:,.2f}</div>
-                            <div class="stat-sub">prestação de serviço</div>
-                        </div>
-                    </div>
-                    """, unsafe_allow_html=True)
-            
-            # Botões de download
-            if gerar_excel or (gerar_zip and zip_buf):
-                st.markdown('<div class="divider"><hr></div>', unsafe_allow_html=True)
-                col1, col2 = st.columns(2)
-                
-                with col1:
-                    if gerar_excel and processor.processed_data:
-                        excel_bytes, n_reg = processor.export_to_excel_bytes()
-                        if excel_bytes:
-                            ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-                            st.download_button(
-                                label=f"📊 Excel — {n_reg} CT-es",
-                                data=excel_bytes,
-                                file_name=f"CTe_{ts}.xlsx",
-                                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                            )
-                
-                with col2:
-                    if gerar_zip and zip_buf:
-                        st.download_button(
-                            label="📥 ZIP XMLs brutos",
-                            data=zip_buf,
-                            file_name="XMLs_MasterSaf.zip",
-                            mime="application/zip",
-                        )
-            
-            # Limpeza
-            shutil.rmtree(dl_path, ignore_errors=True)
-            add_log("🏁 Pipeline finalizado com sucesso")
-            update_ui()
-            
-        except Exception as e:
-            add_log(f"❌ ERRO CRÍTICO: {str(e)[:200]}")
-            st.session_state.execucao_ativa = False
-            update_ui()
-            
-            if driver:
-                try:
-                    driver.quit()
-                except:
-                    pass
-            kill_chrome_processes()
-            
-            if 'dl_path' in locals() and os.path.exists(dl_path):
-                shutil.rmtree(dl_path, ignore_errors=True)
-            
-            st.error(f"❌ A execução foi interrompida. Verifique os logs acima.")
 
-# Botão de parada
-if parar and st.session_state.execucao_ativa:
-    st.session_state.execucao_ativa = False
-    add_log("🛑 PARADA SOLICITADA - Finalizando ciclo atual...")
-    st.warning("Parada solicitada. O sistema finalizará o ciclo atual e encerrará.")
-    st.rerun()
+                    status_box.info("🔄 Atualizando listagem...")
+                    driver.execute_script("arguments[0].click();",
+                        driver.find_element(By.XPATH, '//*[@id="listagem_atualiza"]'))
+                    time.sleep(5)
+                    progress_bar.progress(0.12)
+                    log_placeholder.markdown(
+                        '\n'.join([f"[{e['ts']}] {e['msg']}" for e in st.session_state.ms_logs[-15:]]),
+                    )
+
+                    add_ms_log("⚙️ Configurando 200 itens por página...", 'info')
+                    sel = driver.find_element(
+                        By.XPATH, '//*[@id="plistagem_center"]/table/tbody/tr/td[8]/select')
+                    sel.click()
+                    time.sleep(1)
+                    sel.find_element(By.XPATH, './/option[@value="200"]').click()
+                    time.sleep(3)
+                    progress_bar.progress(0.15)
+                    log_placeholder.markdown(
+                        '\n'.join([f"[{e['ts']}] {e['msg']}" for e in st.session_state.ms_logs[-15:]]),
+                    )
+
+                    add_ms_log(f"📥 Loop de download iniciado — {int(qtd_loops)} página(s)", 'info')
+                    log_placeholder.markdown(
+                        '\n'.join([f"[{e['ts']}] {e['msg']}" for e in st.session_state.ms_logs[-15:]]),
+                    )
+
+                    for i in range(int(qtd_loops)):
+                        add_ms_log(f"━━ Página {i + 1} / {int(qtd_loops)}", 'info')
+                        log_placeholder.markdown(
+                            '\n'.join([f"[{e['ts']}] {e['msg']}" for e in st.session_state.ms_logs[-15:]]),
+                        )
+
+                        try:
+                            cb = driver.find_element(
+                                By.XPATH, '//*[@id="jqgh_listagem_checkBox"]/div/input')
+                            if not cb.is_selected():
+                                cb.click()
+                            time.sleep(2)
+                        except Exception:
+                            add_ms_log("   ⚠  Não foi possível marcar checkboxes", 'warn')
+
+                        try:
+                            driver.execute_script("arguments[0].click();",
+                                driver.find_element(By.XPATH, '//*[@id="xml_multiplos"]/h3'))
+                            time.sleep(2)
+                            driver.execute_script("arguments[0].click();",
+                                driver.find_element(By.XPATH, '//*[@id="downloadEmMassaXml"]'))
+                        except Exception:
+                            add_ms_log("   ⚠  Botão de download em massa não encontrado", 'warn')
+
+                        add_ms_log("   ⏳ Aguardando download finalizar...", 'info')
+                        log_placeholder.markdown(
+                            '\n'.join([f"[{e['ts']}] {e['msg']}" for e in st.session_state.ms_logs[-15:]]),
+                        )
+                        esperar_downloads(dl_path, timeout=120)
+                        time.sleep(2)
+
+                        try:
+                            cb = driver.find_element(
+                                By.XPATH, '//*[@id="jqgh_listagem_checkBox"]/div/input')
+                            if cb.is_selected():
+                                cb.click()
+                            time.sleep(1)
+                        except Exception:
+                            pass
+
+                        if i < int(qtd_loops) - 1:
+                            try:
+                                driver.find_element(
+                                    By.XPATH, '//*[@id="next_plistagem"]/span').click()
+                                time.sleep(5)
+                            except Exception:
+                                add_ms_log("   ⚠  Fim das páginas disponíveis", 'warn')
+                                break
+
+                        pct = 0.15 + ((i + 1) / int(qtd_loops)) * 0.60
+                        progress_bar.progress(pct)
+                        status_box.info(
+                            f"⏳ Baixando XMLs — {i + 1} de {int(qtd_loops)} páginas concluídas...")
+
+                    add_ms_log("✅ Todos os downloads concluídos", 'ok')
+                    driver.quit()
+                    driver = None
+                    progress_bar.progress(0.78)
+                    log_placeholder.markdown(
+                        '\n'.join([f"[{e['ts']}] {e['msg']}" for e in st.session_state.ms_logs[-15:]]),
+                    )
+
+                    # ── Processamento ──────────────────────
+                    zip_found = list(Path(dl_path).glob('*.zip'))
+                    add_ms_log(f"🔍 {len(zip_found)} arquivo(s) ZIP localizado(s)", 'info')
+                    log_placeholder.markdown(
+                        '\n'.join([f"[{e['ts']}] {e['msg']}" for e in st.session_state.ms_logs[-15:]]),
+                    )
+
+                    if gerar_excel and zip_found:
+                        status_box.info("📊 Processando XMLs e montando Excel...")
+                        processor.process_directory(dl_path, add_ms_log)
+                        add_ms_log(f"📊 CT-es identificados: {len(processor.processed_data)}", 'ok')
+                    progress_bar.progress(0.92)
+                    log_placeholder.markdown(
+                        '\n'.join([f"[{e['ts']}] {e['msg']}" for e in st.session_state.ms_logs[-15:]]),
+                    )
+
+                    # Salva dados processados na sessão
+                    st.session_state.ms_processed_data = processor.processed_data.copy()
+
+                    # ZIP de XMLs brutos
+                    zip_buf = None
+                    if gerar_zip:
+                        add_ms_log("📦 Empacotando XMLs brutos...", 'info')
+                        buf_io = io.BytesIO()
+                        with zipfile.ZipFile(buf_io, 'w', zipfile.ZIP_DEFLATED) as zipf:
+                            for root_dir, _, files in os.walk(dl_path):
+                                for file in files:
+                                    zipf.write(os.path.join(root_dir, file), file)
+                        buf_io.seek(0)
+                        st.session_state.ms_zip_bytes = buf_io.getvalue()
+
+                    progress_bar.progress(1.0)
+                    status_box.success("✅ Automação concluída com sucesso!")
+                    add_ms_log("🏁 Pipeline completo.", 'ok')
+                    log_placeholder.markdown(
+                        '\n'.join([f"[{e['ts']}] {e['msg']}" for e in st.session_state.ms_logs[-15:]]),
+                    )
+
+                    shutil.rmtree(dl_path, ignore_errors=True)
+
+                    # ── Stats ────────────────────────────
+                    if processor.processed_data:
+                        summ = processor.summary()
+                        ph('<div style="margin-top:1.5rem;"></div>')
+                        section_title("📊 Resumo da Extração")
+                        ph(f"""
+                        <div class="ms-stat-grid">
+                            <div class="ms-stat-card">
+                                <div class="ms-stat-label">CT-es Processados</div>
+                                <div class="ms-stat-value">{summ['total']:,}</div>
+                                <div class="ms-stat-sub">documentos fiscais</div>
+                            </div>
+                            <div class="ms-stat-card">
+                                <div class="ms-stat-label">Peso Bruto Total</div>
+                                <div class="ms-stat-value">{summ['peso_total']:,.0f}</div>
+                                <div class="ms-stat-sub">quilogramas</div>
+                            </div>
+                            <div class="ms-stat-card">
+                                <div class="ms-stat-label">Valor Total</div>
+                                <div class="ms-stat-value">R$ {summ['valor_total']:,.2f}</div>
+                                <div class="ms-stat-sub">prestação de serviço</div>
+                            </div>
+                            <div class="ms-stat-card">
+                                <div class="ms-stat-label">Emitentes Únicos</div>
+                                <div class="ms-stat-value">{summ['emitentes']}</div>
+                                <div class="ms-stat-sub">transportadoras</div>
+                            </div>
+                        </div>
+                        """)
+
+                except Exception as e:
+                    st.error(f"❌ Erro técnico: {str(e)[:300]}")
+                    add_ms_log(f"❌ EXCEÇÃO: {str(e)[:300]}", 'err')
+                    log_placeholder.markdown(
+                        '\n'.join([f"[{e['ts']}] {e['msg']}" for e in st.session_state.ms_logs[-15:]]),
+                    )
+                    if driver:
+                        try:
+                            driver.quit()
+                        except Exception:
+                            pass
+                    if dl_path and os.path.exists(dl_path):
+                        shutil.rmtree(dl_path, ignore_errors=True)
+
+    # ════════════════════════════════════════════════════════════
+    # TAB RESULTADOS
+    # ════════════════════════════════════════════════════════════
+    with tab_resultados:
+        if st.session_state.ms_processed_data:
+            df = pd.DataFrame(st.session_state.ms_processed_data)
+
+            section_title("🔎 Filtros")
+            fc1, fc2, fc3 = st.columns(3)
+            with fc1:
+                uf_f = st.multiselect("UF Início", options=df['UF Inicio'].unique(), key="ms_uf_ini")
+            with fc2:
+                uf_d = st.multiselect("UF Destino", options=df['UF Destino'].unique(), key="ms_uf_dest")
+            with fc3:
+                emit_f = st.multiselect("Emitente", options=df['Emitente'].unique(), key="ms_emit")
+
+            pmin = float(df['Peso Bruto (kg)'].min())
+            pmax = float(df['Peso Bruto (kg)'].max())
+            pf = st.slider("Faixa de Peso (kg)", pmin, pmax, (pmin, pmax),
+                           format="%.1f kg", key="ms_peso_range") if pmin < pmax else (pmin, pmax)
+
+            fdf = df.copy()
+            if uf_f: fdf = fdf[fdf['UF Inicio'].isin(uf_f)]
+            if uf_d: fdf = fdf[fdf['UF Destino'].isin(uf_d)]
+            if emit_f: fdf = fdf[fdf['Emitente'].isin(emit_f)]
+            fdf = fdf[(fdf['Peso Bruto (kg)'] >= pf[0]) & (fdf['Peso Bruto (kg)'] <= pf[1])]
+
+            section_title("📊 Métricas")
+            m1, m2, m3, m4 = st.columns(4)
+            m1.metric("💰 Valor Total",    f"R$ {fdf['Valor Prestacao'].sum():,.2f}")
+            m2.metric("⚖️ Peso Total",     f"{fdf['Peso Bruto (kg)'].sum():,.2f} kg")
+            m3.metric("📈 Peso Médio",     f"{fdf['Peso Bruto (kg)'].mean():,.2f} kg")
+            m4.metric("📋 CT-es",          len(fdf))
+
+            section_title("📋 Dados")
+            cols = ['Arquivo','nCT','Data Emissao','Emitente','Remetente',
+                    'Destinatario','UF Inicio','UF Destino','Peso Bruto (kg)',
+                    'Valor Prestacao']
+            st.dataframe(fdf[cols], use_container_width=True, height=300)
+
+            with st.expander("📋 Todos os campos"):
+                st.dataframe(fdf, use_container_width=True)
+
+            section_title("📈 Análise Visual")
+            g1, g2 = st.columns(2)
+            with g1:
+                if not fdf.empty:
+                    fig = px.histogram(fdf, x='Peso Bruto (kg)', nbins=30,
+                                       title="Distribuição de Peso Bruto",
+                                       color_discrete_sequence=['#3B82F6'])
+                    fig.update_layout(margin=dict(t=38,b=8,l=8,r=8))
+                    st.plotly_chart(fig, use_container_width=True)
+            with g2:
+                if not fdf.empty:
+                    fig2 = px.scatter(fdf, x='Peso Bruto (kg)', y='Valor Prestacao',
+                                      color='UF Destino',
+                                      title="Peso vs Valor Prestação",
+                                      color_discrete_sequence=px.colors.qualitative.Set2)
+                    try:
+                        x = fdf['Peso Bruto (kg)'].values
+                        y = fdf['Valor Prestacao'].values
+                        mask = ~np.isnan(x) & ~np.isnan(y)
+                        xc, yc = x[mask], y[mask]
+                        if len(xc) > 1:
+                            xs = np.linspace(xc.min(), xc.max(), 100)
+                            fig2.add_trace(go.Scatter(
+                                x=xs, y=np.poly1d(np.polyfit(xc, yc, 1))(xs),
+                                mode='lines', name='Tendência',
+                                line=dict(color='#EF4444', dash='dash'), opacity=.7))
+                    except Exception:
+                        pass
+                    fig2.update_layout(margin=dict(t=38,b=8,l=8,r=8),
+                                       legend=dict(orientation="h", y=-0.22))
+                    st.plotly_chart(fig2, use_container_width=True)
+        else:
+            empty_state("📊", "Nenhum CT-e processado ainda",
+                        "Execute a automação na aba 'Executar Automação' para ver os resultados")
+
+    # ════════════════════════════════════════════════════════════
+    # TAB EXPORTAR
+    # ════════════════════════════════════════════════════════════
+    with tab_export:
+        if st.session_state.ms_processed_data:
+            df = pd.DataFrame(st.session_state.ms_processed_data)
+
+            section_title("💾 Exportar Dados")
+            cf, cc = st.columns([1, 2], gap="large")
+            with cf:
+                st.metric("📋 Registros", len(df))
+                fmt = st.radio("Formato", ["📊 Excel (.xlsx)", "📄 CSV (.csv)"], key="ms_exp_fmt")
+            with cc:
+                cols = st.multiselect("Colunas", options=df.columns.tolist(),
+                                      default=df.columns.tolist(), key="ms_exp_cols")
+            df_exp = df[cols] if cols else df
+            st.divider()
+            if "Excel" in fmt:
+                out = BytesIO()
+                with pd.ExcelWriter(out, engine='xlsxwriter') as w:
+                    df_exp.to_excel(w, sheet_name='Dados_CTe', index=False)
+                out.seek(0)
+                st.download_button("📥 Baixar Excel", data=out,
+                                   file_name="dados_cte_mastersaf.xlsx",
+                                   mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                                   use_container_width=True)
+            else:
+                csv = df_exp.to_csv(index=False).encode('utf-8')
+                st.download_button("📥 Baixar CSV", data=csv,
+                                   file_name="dados_cte_mastersaf.csv", mime="text/csv",
+                                   use_container_width=True)
+
+            # ZIP de XMLs brutos
+            if hasattr(st.session_state, 'ms_zip_bytes') and st.session_state.ms_zip_bytes:
+                st.divider()
+                st.download_button(
+                    "📥  Download ZIP — XMLs brutos",
+                    data=st.session_state.ms_zip_bytes,
+                    file_name="XMLs_MasterSaf.zip",
+                    mime="application/zip",
+                    use_container_width=True,
+                )
+
+            with st.expander("👁️ Prévia"):
+                st.dataframe(df_exp.head(10), use_container_width=True)
+        else:
+            empty_state("📥", "Nenhum dado disponível",
+                        "Execute a automação na aba 'Executar Automação' primeiro")
+
+
+# ==============================================================================
+# PARTE 3 — PARSER EXTRATO DUIMP (layout antigo / HafelePDFParser)
+# ==============================================================================
+class HafelePDFParser:
+    """
+    Parser para o layout Extrato DUIMP (APP2 original).
+    Processa em lotes de _PDF_CHUNK_PAGES páginas para suportar PDFs
+    gigantes (1000+ páginas) sem travar por falta de memória.
+    """
+
+    def __init__(self):
+        self.documento = {'cabecalho': {}, 'itens': [], 'totais': {}}
+        self._buffer   = ""
+
+    @staticmethod
+    def _parse_valor(v: str) -> float:
+        try:
+            return float(v.strip().replace('.','').replace(',','.')) if v else 0.0
+        except: return 0.0
+
+    def parse_pdf(self, pdf_path: str) -> Dict:
+        try:
+            prog_txt = st.empty()
+            prog_bar = st.progress(0)
+            items_found: list = []
+            self._buffer = ""
+
+            with pdfplumber.open(pdf_path) as pdf:
+                total = len(pdf.pages)
+                chunk = _PDF_CHUNK_PAGES
+
+                for start in range(0, total, chunk):
+                    end = min(start + chunk, total)
+                    prog_txt.text(
+                        f"Processando páginas {start+1}–{end} de {total} "
+                        f"(Extrato DUIMP)... {int((end/total)*100)}%"
+                    )
+                    prog_bar.progress(end / total)
+
+                    chunk_lines = []
+                    for page in pdf.pages[start:end]:
+                        t = page.extract_text(layout=False)
+                        if t: chunk_lines.append(t)
+
+                    chunk_text = self._buffer + "\n".join(chunk_lines)
+                    is_last    = (end == total)
+                    new_items, self._buffer = self._extract_items_from_chunk(
+                        chunk_text, is_last=is_last
+                    )
+                    items_found.extend(new_items)
+                    del chunk_lines, chunk_text
+                    gc.collect()
+
+            prog_txt.empty()
+            prog_bar.empty()
+
+            if self._buffer.strip():
+                new_items, _ = self._extract_items_from_chunk(self._buffer, is_last=True)
+                items_found.extend(new_items)
+
+            if not items_found:
+                st.warning("⚠️ Padrão 'ITENS DA DUIMP' não encontrado. Verifique o formato do PDF.")
+
+            self.documento['itens'] = items_found
+            self._calculate_totals()
+            return self.documento
+
+        except Exception as e:
+            logger.error(f"Erro HafelePDFParser: {e}")
+            st.error(f"Erro ao ler PDF: {str(e)}")
+            return self.documento
+
+    def _extract_items_from_chunk(self, text: str, is_last: bool):
+        pattern = r'(ITENS\s+DA\s+DUIMP\s*-\s*\d+)'
+        parts = re.split(pattern, text, flags=re.IGNORECASE)
+        items_found = []
+
+        if len(parts) <= 1:
+            return items_found, (text if not is_last else "")
+
+        n_complete = len(parts) - 1 if not is_last else len(parts)
+
+        for i in range(1, n_complete, 2):
+            header  = parts[i]
+            content = parts[i+1] if (i+1) < len(parts) else ''
+            m = re.search(r'(\d+)', header)
+            num = int(m.group(1)) if m else (i // 2)
+            item = self._parse_item_block(num, content)
+            if item: items_found.append(item)
+
+        if not is_last and len(parts) >= 2:
+            last_header  = parts[-2] if len(parts) % 2 == 0 else ""
+            last_content = parts[-1]
+            residual = last_header + last_content
+        else:
+            residual = ""
+
+        return items_found, residual
+
+    def _parse_item_block(self, item_num: int, text: str) -> Dict:
+        try:
+            pv = self._parse_valor
+            item = {
+                'numero_item': item_num, 'numeroAdicao': str(item_num).zfill(3),
+                'ncm':'', 'codigo_interno':'', 'nome_produto':'',
+                'quantidade':0.0, 'quantidade_comercial':0.0,
+                'peso_liquido':0.0, 'valor_total':0.0,
+                'ii_valor_devido':0.0,'ii_base_calculo':0.0,'ii_aliquota':0.0,
+                'ipi_valor_devido':0.0,'ipi_base_calculo':0.0,'ipi_aliquota':0.0,
+                'pis_valor_devido':0.0,'pis_base_calculo':0.0,'pis_aliquota':0.0,
+                'cofins_valor_devido':0.0,'cofins_base_calculo':0.0,'cofins_aliquota':0.0,
+                'frete_internacional':0.0,'seguro_internacional':0.0,
+                'local_aduaneiro':0.0,'aduaneiro_reais':0.0,'valorAduaneiroReal':0.0,
+                'paisOrigem':'','fornecedor_raw':'','endereco_raw':'',
+                'unidade':'UNIDADE','pesoLiq':'0','valorTotal':'0','valorUnit':'0',
+                'moeda':'EURO/COM.EUROPEIA',
+            }
+            m = re.search(r'Código interno\s*([\d\.]+)', text, re.IGNORECASE)
+            if m: item['codigo_interno'] = m.group(1).replace('.','')
+            m = re.search(r'(\d{4}\.\d{2}\.\d{2})', text)
+            if m: item['ncm'] = m.group(1).replace('.','')
+            m = re.search(r'Qtde Unid\. Comercial\s*([\d\.,]+)', text)
+            if m: item['quantidade_comercial'] = pv(m.group(1))
+            m = re.search(r'Qtde Unid\. Estatística\s*([\d\.,]+)', text)
+            item['quantidade'] = pv(m.group(1)) if m else item['quantidade_comercial']
+            m = re.search(r'Valor Tot\. Cond Venda\s*([\d\.,]+)', text)
+            if m: item['valor_total'] = pv(m.group(1)); item['valorTotal'] = m.group(1)
+            m = re.search(r'Peso Líquido \(KG\)\s*([\d\.,]+)', text, re.IGNORECASE)
+            if m: item['peso_liquido'] = pv(m.group(1)); item['pesoLiq'] = m.group(1)
+            m = re.search(r'Frete Internac\. \(R\$\)\s*([\d\.,]+)', text)
+            if m: item['frete_internacional'] = pv(m.group(1))
+            m = re.search(r'Seguro Internac\. \(R\$\)\s*([\d\.,]+)', text)
+            if m: item['seguro_internacional'] = pv(m.group(1))
+            m = re.search(r'Local Aduaneiro \(R\$\)\s*([\d\.,]+)', text)
+            if m:
+                item['local_aduaneiro'] = pv(m.group(1))
+                item['aduaneiro_reais'] = item['local_aduaneiro']
+                item['valorAduaneiroReal'] = item['local_aduaneiro']
+            tax_pats = re.findall(
+                r'Base de Cálculo.*?\(R\$\)\s*([\d\.,]+).*?% Alíquota\s*([\d\.,]+).*?Valor.*?(?:Devido|A Recolher|Calculado).*?\(R\$\)\s*([\d\.,]+)',
+                text, re.DOTALL | re.IGNORECASE)
+            for base_s, aliq_s, val_s in tax_pats:
+                base = pv(base_s); aliq = pv(aliq_s); val = pv(val_s)
+                if 1.60<=aliq<=3.00:
+                    item['pis_aliquota']=aliq; item['pis_base_calculo']=base; item['pis_valor_devido']=val
+                elif 7.00<=aliq<=12.00:
+                    item['cofins_aliquota']=aliq; item['cofins_base_calculo']=base; item['cofins_valor_devido']=val
+                elif aliq>12.00:
+                    item['ii_aliquota']=aliq; item['ii_base_calculo']=base; item['ii_valor_devido']=val
+                elif aliq>=0 and item['ipi_aliquota']==0:
+                    item['ipi_aliquota']=aliq; item['ipi_base_calculo']=base; item['ipi_valor_devido']=val
+            item['total_impostos']=(item['ii_valor_devido']+item['ipi_valor_devido']
+                                    +item['pis_valor_devido']+item['cofins_valor_devido'])
+            item['valor_total_com_impostos']=item['valor_total']+item['total_impostos']
+            return item
+        except Exception as e:
+            logger.error(f"Erro item {item_num}: {e}"); return None
+
+    def _calculate_totals(self):
+        if self.documento['itens']:
+            itens = self.documento['itens']
+            self.documento['totais'] = {
+                'valor_total_mercadoria': sum(i['valor_total'] for i in itens),
+                'total_valor_aduaneiro':  sum(i.get('aduaneiro_reais',0) for i in itens),
+                'total_ii':     sum(i['ii_valor_devido'] for i in itens),
+                'total_ipi':    sum(i['ipi_valor_devido'] for i in itens),
+                'total_pis':    sum(i['pis_valor_devido'] for i in itens),
+                'total_cofins': sum(i['cofins_valor_devido'] for i in itens),
+                'total_frete':  sum(i['frete_internacional'] for i in itens),
+                'total_seguro': sum(i['seguro_internacional'] for i in itens),
+                'quantidade_adicoes': len(itens),
+            }
+
+
+# ==============================================================================
+# PARTE 3B — PARSER SIGRAWEB (layout novo)
+# ==============================================================================
+class SigrawebPDFParser:
+    """
+    Parser para o layout Sigraweb — Conferência do Processo Detalhado.
+    Processa em lotes de _PDF_CHUNK_PAGES páginas.
+    """
+
+    def __init__(self):
+        self.documento = {'cabecalho': {}, 'itens': [], 'totais': {}}
+
+    @staticmethod
+    def _parse_valor(v: str) -> float:
+        try:
+            return float(str(v).strip().replace('.','').replace(',','.')) if v else 0.0
+        except: return 0.0
+
+    @staticmethod
+    def _fmt_date(d: str) -> str:
+        try:
+            return datetime.strptime(d.strip(), '%d/%m/%Y').strftime('%Y%m%d')
+        except:
+            return d.replace('/','').replace('-','')[:8]
+
+    def parse_pdf(self, pdf_path: str) -> Dict:
+        try:
+            prog_txt = st.empty()
+            prog_bar = st.progress(0)
+            items_found: list = []
+            buffer = ""
+
+            with pdfplumber.open(pdf_path) as pdf:
+                total = len(pdf.pages)
+                chunk = _PDF_CHUNK_PAGES
+
+                p1 = pdf.pages[0].extract_text(layout=False) or "" if total > 0 else ""
+                p2 = pdf.pages[1].extract_text(layout=False) or "" if total > 1 else ""
+                self._extract_header(p1, p2)
+                del p1, p2
+
+                for start in range(0, total, chunk):
+                    end = min(start + chunk, total)
+                    prog_txt.text(
+                        f"Processando páginas {start+1}–{end} de {total} "
+                        f"(Sigraweb)... {int((end/total)*100)}%"
+                    )
+                    prog_bar.progress(end / total)
+
+                    chunk_pages = []
+                    for page in pdf.pages[start:end]:
+                        t = page.extract_text(layout=False)
+                        if t: chunk_pages.append(t)
+
+                    chunk_text = buffer + "\n".join(chunk_pages)
+                    is_last    = (end == total)
+                    new_items, buffer = self._extract_items_from_chunk(
+                        chunk_text, is_last=is_last
+                    )
+                    items_found.extend(new_items)
+                    del chunk_pages, chunk_text
+                    gc.collect()
+
+            prog_txt.empty()
+            prog_bar.empty()
+
+            if buffer.strip():
+                new_items, _ = self._extract_items_from_chunk(buffer, is_last=True)
+                items_found.extend(new_items)
+
+            if not items_found:
+                st.warning("⚠️ Nenhuma adição detectada no PDF Sigraweb.")
+
+            self.documento['itens'] = items_found
+            self._calculate_totals()
+            return self.documento
+
+        except Exception as e:
+            logger.error(f"Erro SigrawebPDFParser: {e}")
+            st.error(f"Erro ao ler PDF Sigraweb: {str(e)}")
+            return self.documento
+
+    def _extract_items_from_chunk(self, text: str, is_last: bool):
+        pattern = r'Informações da Adição Nº:\s*(\d+)'
+        parts   = re.split(pattern, text)
+        items_found = []
+
+        if len(parts) <= 1:
+            return items_found, (text if not is_last else "")
+
+        n_complete = len(parts) - 1 if not is_last else len(parts)
+
+        for i in range(1, n_complete, 2):
+            num_str = parts[i].strip()
+            content = parts[i+1] if (i+1) < len(parts) else ''
+            item    = self._parse_item_block(num_str, content)
+            if item: items_found.append(item)
+
+        if not is_last and len(parts) >= 2:
+            last_num     = parts[-2] if len(parts) % 2 == 0 else ""
+            last_content = parts[-1]
+            residual = (f"Informações da Adição Nº: {last_num}\n"
+                        if last_num else "") + last_content
+        else:
+            residual = ""
+
+        return items_found, residual
+
+    def _extract_header(self, p1: str, p2: str):
+        def _f(pat, text, default=''):
+            m = re.search(pat, text)
+            return m.group(1).strip() if m else default
+        h = {}
+        h['numeroDI']       = _f(r'Número DI:\s*([\w]+)', p1)
+        h['sigraweb']       = _f(r'SIGRAWEB:\s*([\w]+)', p1)
+        h['cnpj']           = _f(r'CNPJ:\s*([\d\.\/\-]+)', p1)
+        h['nomeImportador'] = _f(r'Nome da Empresa:\s*(.+?)(?:\n|CNPJ)', p1)
+        dr = _f(r'Data Registro:([\d\-T:\.+]+)', p1)
+        h['dataRegistro']   = dr[:10].replace('-','') if dr else ''
+        h['pesoBruto']      = _f(r'Peso Bruto:([\d\.,]+)', p1)
+        h['pesoLiquido']    = _f(r'Peso Líquido:([\d\.,]+)', p1)
+        h['volumes']        = _f(r'Volumes:([\d]+)', p1)
+        h['embalagem']      = _f(r'Embalagem:(\w+)', p1)
+        h['urf']            = _f(r'URF de Entrada:\s*(\d+)', p1, '0917900')
+        h['urfDespacho']    = _f(r'URF de Despacho:\s*(\d+)', p1, '0917900')
+        h['modalidade']     = _f(r'Modalidade de Despacho:\s*(.+?)(?:\n)', p1, 'Normal')
+        h['viaTransporte']  = _f(r'Via Transporte:\s*(.+?)(?:\n)', p1, 'Aéreo')
+        pais_raw = _f(r'País de Procedência:\s*\d+\s*(.+?)(?:\n|Local|Incoterms)', p1)
+        h['paisProcedencia']= pais_raw.strip() if pais_raw else 'Alemanha'
+        h['localEmbarque']  = _f(r'Local de Embarque:\s*(.+?)(?:\n|Data)', p1)
+        h['dataEmbarque']   = _f(r'Data de Embarque:\s*([\d\/]+)', p1)
+        h['dataChegada']    = _f(r'Data de Chegada no Brasil:\s*([\d\/]+)', p1)
+        h['incoterms']      = _f(r'Incoterms:\s*(\w+)', p1, 'FCA')
+        h['idtConhecimento']= _f(r'IDT\. Conhecimento:\s*([\w]+)', p1)
+        h['idtMaster']      = _f(r'IDT\. Master:\s*([\w]+)', p1)
+        h['transportador']  = _f(r'Transportador:\s*(.+?)(?:\n|Agente)', p1)
+        h['agenteCarga']    = _f(r'Agente de Carga:\s*(.+?)(?:\n|CE)', p1)
+        combined = p1 + "\n" + p2
+        h['taxaEUR']  = _f(r'Taxa EUR:\s*([\d\.,]+)', combined)
+        h['taxaDolar']= _f(r'Taxa do Dólar:\s*([\d\.,]+)', combined)
+        h['fobEUR']   = _f(r'FOB:\s*([\d\.,]+)\s*\(EUR\)', combined)
+        h['fobUSD']   = _f(r'FOB:.*?\(EUR\)\s*;\s*([\d\.,]+)\s*\(USD\)', combined)
+        h['fobBRL']   = _f(r'FOB:.*?\(USD\);\s*([\d\.,]+)\s*\(BRL\)', combined)
+        h['freteEUR'] = _f(r'Frete:\s*([\d\.,]+)\s*\(EUR\)', combined)
+        h['freteUSD'] = _f(r'Frete:.*?\(EUR\)\s*;\s*([\d\.,]+)\s*\(USD\)', combined)
+        h['freteBRL'] = _f(r'Frete:.*?\(USD\);\s*([\d\.,]+)\s*\(BRL\)', combined)
+        h['seguroUSD']= _f(r'Seguro:\s*([\d\.,]+)\s*\(USD\)', combined)
+        h['seguroBRL']= _f(r'Seguro:.*?;\s*([\d\.,]+)\s*\(BRL\)', combined)
+        h['cifUSD']   = _f(r'CIF:\s*([\d\.,]+)\s*\(USD\)', combined)
+        h['cifBRL']   = _f(r'CIF:.*?;\s*([\d\.,]+)\s*\(BRL\)', combined)
+        h['valorAduaneiroUSD'] = _f(r'Valor Aduaneiro:\s*([\d\.,]+)\s*\(USD\)', combined)
+        h['valorAduaneiroBRL'] = _f(r'Valor Aduaneiro:.*?;\s*([\d\.,]+)\s*\(BRL\)', combined)
+        tm = re.search(
+            r'([\d\.,]+)\s+([\d\.,]+)\s+([\d\.,]+)\s+([\d\.,]+)\s+([\d\.,]+)\s+Itau\s+(\d+)\s+([\d\-]+)',
+            p1)
+        if tm:
+            h['totalII']=tm.group(1); h['totalIPI']=tm.group(2)
+            h['totalPIS']=tm.group(3); h['totalCOFINS']=tm.group(4)
+            h['totalSiscomex']=tm.group(5); h['banco']='Itau'
+            h['agencia']=tm.group(6); h['conta']=tm.group(7)
+        else:
+            h['totalII']=h['totalIPI']=h['totalPIS']=h['totalCOFINS']='0'
+            h['totalSiscomex']='0'
+            h['banco']  = _f(r'Banco:\s*(\w+)', p2, 'Itau')
+            h['agencia']= _f(r'Agência:\s*([\d]+)', p2, '3715')
+            h['conta']  = _f(r'Conta Corrente:\s*([\w\-]+)', p2, '')
+        h['dataEmbarqueISO'] = self._fmt_date(h['dataEmbarque']) if h['dataEmbarque'] else ''
+        h['dataChegadaISO']  = self._fmt_date(h['dataChegada'])  if h['dataChegada']  else ''
+        self.documento['cabecalho'] = h
+
+    def _parse_item_block(self, num_str: str, text: str) -> Optional[Dict]:
+        try:
+            pv = self._parse_valor
+            item = {
+                'numero_item': int(num_str), 'numeroAdicao': num_str.zfill(3),
+                'ncm':'', 'codigo_interno':'', 'descricao':'',
+                'paisOrigem':'', 'fornecedor_raw':'HAFELE SE & CO KG', 'endereco_raw':'',
+                'quantidade':'0', 'quantidade_comercial':'0', 'unidade':'PECA',
+                'pesoLiq':'0', 'valorTotal':'0', 'valorUnit':'0',
+                'valorAduaneiroReal':0.0, 'valorAduaneiroUSD':0.0, 'aduaneiro_reais':0.0,
+                'moeda':'EURO/COM.EUROPEIA',
+                'freteUSD':0.0,'freteReal':0.0,'seguroUSD':0.0,'seguroReal':0.0,
+                'frete_internacional':0.0,'seguro_internacional':0.0,'local_aduaneiro':0.0,
+                'ii_aliquota':0.0,'ii_base_calculo':0.0,'ii_valor_devido':0.0,
+                'ipi_aliquota':0.0,'ipi_base_calculo':0.0,'ipi_valor_devido':0.0,
+                'pis_aliquota':0.0,'pis_base_calculo':0.0,'pis_valor_devido':0.0,
+                'cofins_aliquota':0.0,'cofins_base_calculo':0.0,'cofins_valor_devido':0.0,
+            }
+            m = re.search(r'NR NCM:\s*(\d+)', text)
+            if m: item['ncm'] = m.group(1)
+            m = re.search(r'Part Number:\s*([\S]+)\s*\|\s*Descrição:\s*(.+?)(?=\nFabricante:|$)',
+                          text, re.DOTALL)
+            if m:
+                item['codigo_interno'] = m.group(1).strip()
+                item['descricao']      = re.sub(r'\s+',' ', m.group(2).strip())
+            else:
+                m2 = re.search(r'Descrição:\s*(.+?)(?=\nFabricante:|$)', text, re.DOTALL)
+                if m2: item['descricao'] = re.sub(r'\s+',' ', m2.group(1).strip())
+            m = re.search(r'Peso Líquido:\s*([\d\.,]+)', text)
+            if m: item['pesoLiq'] = m.group(1)
+            m = re.search(r'Qnt\. Estatística:\s*([\d\.,]+)', text)
+            if m: item['quantidade'] = m.group(1)
+            m = re.search(r'Quantidade:\s*([\d\.,]+)\s+Unidade:', text)
+            item['quantidade_comercial'] = m.group(1) if m else item['quantidade']
+            m = re.search(r'Unidade:\s*(\S+)', text)
+            if m: item['unidade'] = m.group(1).upper()
+            m = re.search(r'Valor FOB:\s*([\d\.,]+)\s+EUR', text)
+            if m: item['valorTotal'] = m.group(1)
+            m = re.search(r'Valor Unitário:\s*([\d\.,]+)', text)
+            if m: item['valorUnit'] = m.group(1)
+            m = re.search(r'Valor Aduaneiro USD:\s*([\d\.,]+)', text)
+            if m: item['valorAduaneiroUSD'] = pv(m.group(1))
+            m = re.search(r'Valor Aduaneiro Real:\s*([\d\.,]+)', text)
+            if m:
+                item['valorAduaneiroReal'] = pv(m.group(1))
+                item['aduaneiro_reais']    = pv(m.group(1))
+                item['ii_base_calculo']    = pv(m.group(1))
+            m = re.search(r'Valor Frete:\s*([\d\.,]+)\s+USD', text)
+            if m: item['freteUSD'] = pv(m.group(1))
+            m = re.search(r'Valor Frete Real:\s*([\d\.,]+)', text)
+            if m: item['freteReal'] = pv(m.group(1)); item['frete_internacional'] = item['freteReal']
+            m = re.search(r'Valor Seguro:\s*([\d\.,]+)\s+USD', text)
+            if m: item['seguroUSD'] = pv(m.group(1))
+            m = re.search(r'Valor Seguro Real:\s*([\d\.,]+)', text)
+            if m: item['seguroReal'] = pv(m.group(1)); item['seguro_internacional'] = item['seguroReal']
+            m = re.search(r'Moeda LI:\s*(.+?)(?:\n|Valor)', text)
+            if m: item['moeda'] = m.group(1).strip()
+            m = re.search(r'País Origem:\s*(.+?)(?:\n|Fabricante)', text)
+            if m: item['paisOrigem'] = m.group(1).strip()
+            m = re.search(r'Fornecedor:\s*(.+?)(?:\n|País)', text)
+            if m: item['fornecedor_raw'] = m.group(1).strip()
+            m = re.search(r'^II\s+([\d\.,]+)\s+[\d\.,]+\s+[\d\.,]+\s+[\d\.,]+\s+[\d\.,]+\s+([\d\.,]+)\s+([\d\.,]+)',
+                          text, re.MULTILINE)
+            if m: item['ii_aliquota']=pv(m.group(1)); item['ii_base_calculo']=pv(m.group(2)); item['ii_valor_devido']=pv(m.group(3))
+            m = re.search(r'^IPI\s+([\d\.,]+)\s+[\d\.,]+\s+[\d\.,]+\s+[\d\.,]+\s+([\d\.,]+)\s+([\d\.,]+)',
+                          text, re.MULTILINE)
+            if m: item['ipi_aliquota']=pv(m.group(1)); item['ipi_base_calculo']=pv(m.group(2)); item['ipi_valor_devido']=pv(m.group(3))
+            m = re.search(r'^PIS\s+([\d\.,]+)\s+[\d\.,]+\s+[\d\.,]+\s+[\d\.,]+\s+([\d\.,]+)\s+([\d\.,]+)',
+                          text, re.MULTILINE)
+            if m: item['pis_aliquota']=pv(m.group(1)); item['pis_base_calculo']=pv(m.group(2)); item['pis_valor_devido']=pv(m.group(3))
+            m = re.search(r'^COFINS\s+([\d\.,]+)\s+[\d\.,]+\s+[\d\.,]+\s+[\d\.,]+\s+([\d\.,]+)\s+([\d\.,]+)',
+                          text, re.MULTILINE)
+            if m: item['cofins_aliquota']=pv(m.group(1)); item['cofins_base_calculo']=pv(m.group(2)); item['cofins_valor_devido']=pv(m.group(3))
+            item['total_impostos'] = (item['ii_valor_devido']+item['ipi_valor_devido']
+                                      +item['pis_valor_devido']+item['cofins_valor_devido'])
+            item['valor_total_com_impostos'] = pv(str(item['valorTotal']))+item['total_impostos']
+            return item
+        except Exception as e:
+            logger.error(f"Erro item {num_str}: {e}"); return None
+
+    def _calculate_totals(self):
+        if self.documento['itens']:
+            pv = self._parse_valor
+            itens = self.documento['itens']
+            self.documento['totais'] = {
+                'valor_total_fob':       sum(pv(str(i.get('valorTotal',0))) for i in itens),
+                'peso_liquido_total':    sum(pv(str(i.get('pesoLiq',0))) for i in itens),
+                'total_valor_aduaneiro': sum(i.get('aduaneiro_reais',0) for i in itens),
+                'total_ii':    sum(i.get('ii_valor_devido',0) for i in itens),
+                'total_ipi':   sum(i.get('ipi_valor_devido',0) for i in itens),
+                'total_pis':   sum(i.get('pis_valor_devido',0) for i in itens),
+                'total_cofins':sum(i.get('cofins_valor_devido',0) for i in itens),
+                'total_frete': sum(i.get('frete_internacional',0) for i in itens),
+                'total_seguro':sum(i.get('seguro_internacional',0) for i in itens),
+                'quantidade_adicoes': len(itens),
+            }
+
+
+# ==============================================================================
+# PARTE 4 — montar_descricao_final + DuimpPDFParser
+# ==============================================================================
+def montar_descricao_final(desc_complementar, codigo_extra, detalhamento):
+    return f"{str(desc_complementar).strip()} - {str(codigo_extra).strip()} - {str(detalhamento).strip()}"
+
+
+class DuimpPDFParser:
+    def __init__(self, pdf_path: str):
+        self.pdf_path  = pdf_path
+        self.full_text = ""
+        self.header    = {}
+        self.items     = []
+
+    def preprocess(self):
+        prog_txt = st.empty()
+        prog_bar = st.progress(0)
+        doc      = fitz.open(self.pdf_path)
+        total    = doc.page_count
+        parts    = []
+
+        for start in range(0, total, _PDF_CHUNK_PAGES):
+            end = min(start + _PDF_CHUNK_PAGES, total)
+            prog_txt.text(f"Pré-processando páginas {start+1}–{end} de {total} (DUIMP)...")
+            prog_bar.progress(end / total)
+
+            chunk_lines = []
+            for idx in range(start, end):
+                page = doc[idx]
+                for line in page.get_text("text").split('\n'):
+                    ls = line.strip()
+                    if "Extrato da DUIMP" in ls: continue
+                    if "Data, hora e responsável" in ls: continue
+                    if re.match(r'^\d+\s*/\s*\d+$', ls): continue
+                    chunk_lines.append(line)
+                page = None
+
+            parts.append("\n".join(chunk_lines))
+            del chunk_lines
+            gc.collect()
+
+        doc.close()
+        prog_txt.empty()
+        prog_bar.empty()
+
+        self.full_text = "\n".join(parts)
+        del parts
+        gc.collect()
+
+    def extract_header(self):
+        t = self.full_text
+        self.header["numeroDUIMP"]    = self._r(r"Extrato da Duimp\s+([\w\-\/]+)", t)
+        self.header["cnpj"]           = self._r(r"CNPJ do importador:\s*([\d\.\/\-]+)", t)
+        self.header["nomeImportador"] = self._r(r"Nome do importador:\s*\n?(.+)", t)
+        self.header["pesoBruto"]      = self._r(r"Peso Bruto \(kg\):\s*([\d\.,]+)", t)
+        self.header["pesoLiquido"]    = self._r(r"Peso Liquido \(kg\):\s*([\d\.,]+)", t)
+        self.header["urf"]            = self._r(r"Unidade de despacho:\s*([\d]+)", t)
+        self.header["paisProcedencia"]= self._r(r"País de Procedência:\s*\n?(.+)", t)
+
+    def extract_items(self):
+        chunks = re.split(r"Item\s+(\d+)", self.full_text)
+        if len(chunks) > 1:
+            for i in range(1, len(chunks), 2):
+                num = chunks[i]; content = chunks[i+1]
+                item = {"numeroAdicao": num}
+                item["ncm"]        = self._r(r"NCM:\s*([\d\.]+)", content)
+                item["paisOrigem"] = self._r(r"País de origem:\s*\n?(.+)", content)
+                item["quantidade"] = self._r(r"Quantidade na unidade estatística:\s*([\d\.,]+)", content)
+                item["quantidade_comercial"] = self._r(r"Quantidade na unidade comercializada:\s*([\d\.,]+)", content)
+                item["unidade"]    = self._r(r"Unidade estatística:\s*(.+)", content)
+                item["pesoLiq"]    = self._r(r"Peso líquido \(kg\):\s*([\d\.,]+)", content)
+                item["valorUnit"]  = self._r(r"Valor unitário na condição de venda:\s*([\d\.,]+)", content)
+                item["valorTotal"] = self._r(r"Valor total na condição de venda:\s*([\d\.,]+)", content)
+                item["moeda"]      = self._r(r"Moeda negociada:\s*(.+)", content)
+                m = re.search(r"Código do Exportador Estrangeiro:\s*(.+?)(?=\n\s*(?:Endereço|Dados))",
+                              content, re.DOTALL)
+                item["fornecedor_raw"] = m.group(1).strip() if m else ""
+                m = re.search(r"Endereço:\s*(.+?)(?=\n\s*(?:Dados da Mercadoria|Aplicação))",
+                              content, re.DOTALL)
+                item["endereco_raw"] = m.group(1).strip() if m else ""
+                m = re.search(r"Detalhamento do Produto:\s*(.+?)(?=\n\s*(?:Número de Identificação|Versão|Código de Class|Descrição complementar))",
+                              content, re.DOTALL)
+                item["descricao"] = m.group(1).strip() if m else ""
+                m = re.search(r"Descrição complementar da mercadoria:\s*(.+?)(?=\n|$)",
+                              content, re.DOTALL)
+                item["desc_complementar"] = m.group(1).strip() if m else ""
+                self.items.append(item)
+
+    def _r(self, pat, text):
+        m = re.search(pat, text)
+        return m.group(1).strip() if m else ""
+
+
+# ==============================================================================
+# PARTE 5 — ADICAO_FIELDS_ORDER, FOOTER_TAGS, DataFormatter, XMLBuilder
+# ==============================================================================
+ADICAO_FIELDS_ORDER = [
+    {"tag":"acrescimo","type":"complex","children":[
+        {"tag":"codigoAcrescimo","default":"17"},
+        {"tag":"denominacao","default":"OUTROS ACRESCIMOS AO VALOR ADUANEIRO"},
+        {"tag":"moedaNegociadaCodigo","default":"978"},
+        {"tag":"moedaNegociadaNome","default":"EURO/COM.EUROPEIA"},
+        {"tag":"valorMoedaNegociada","default":"000000000000000"},
+        {"tag":"valorReais","default":"000000000000000"},
+    ]},
+    {"tag":"cideValorAliquotaEspecifica","default":"00000000000"},
+    {"tag":"cideValorDevido","default":"000000000000000"},
+    {"tag":"cideValorRecolher","default":"000000000000000"},
+    {"tag":"codigoRelacaoCompradorVendedor","default":"3"},
+    {"tag":"codigoVinculoCompradorVendedor","default":"1"},
+    {"tag":"cofinsAliquotaAdValorem","default":"00965"},
+    {"tag":"cofinsAliquotaEspecificaQuantidadeUnidade","default":"000000000"},
+    {"tag":"cofinsAliquotaEspecificaValor","default":"0000000000"},
+    {"tag":"cofinsAliquotaReduzida","default":"00000"},
+    {"tag":"cofinsAliquotaValorDevido","default":"000000000000000"},
+    {"tag":"cofinsAliquotaValorRecolher","default":"000000000000000"},
+    {"tag":"condicaoVendaIncoterm","default":"FCA"},
+    {"tag":"condicaoVendaLocal","default":""},
+    {"tag":"condicaoVendaMetodoValoracaoCodigo","default":"01"},
+    {"tag":"condicaoVendaMetodoValoracaoNome","default":"METODO 1 - ART. 1 DO ACORDO (DECRETO 92930/86)"},
+    {"tag":"condicaoVendaMoedaCodigo","default":"978"},
+    {"tag":"condicaoVendaMoedaNome","default":"EURO/COM.EUROPEIA"},
+    {"tag":"condicaoVendaValorMoeda","default":"000000000000000"},
+    {"tag":"condicaoVendaValorReais","default":"000000000000000"},
+    {"tag":"dadosCambiaisCoberturaCambialCodigo","default":"1"},
+    {"tag":"dadosCambiaisCoberturaCambialNome","default":"COM COBERTURA CAMBIAL E PAGAMENTO FINAL A PRAZO DE ATE' 180"},
+    {"tag":"dadosCambiaisInstituicaoFinanciadoraCodigo","default":"00"},
+    {"tag":"dadosCambiaisInstituicaoFinanciadoraNome","default":"N/I"},
+    {"tag":"dadosCambiaisMotivoSemCoberturaCodigo","default":"00"},
+    {"tag":"dadosCambiaisMotivoSemCoberturaNome","default":"N/I"},
+    {"tag":"dadosCambiaisValorRealCambio","default":"000000000000000"},
+    {"tag":"dadosCargaPaisProcedenciaCodigo","default":"000"},
+    {"tag":"dadosCargaUrfEntradaCodigo","default":"0000000"},
+    {"tag":"dadosCargaViaTransporteCodigo","default":"01"},
+    {"tag":"dadosCargaViaTransporteNome","default":"MARÍTIMA"},
+    {"tag":"dadosMercadoriaAplicacao","default":"REVENDA"},
+    {"tag":"dadosMercadoriaCodigoNaladiNCCA","default":"0000000"},
+    {"tag":"dadosMercadoriaCodigoNaladiSH","default":"00000000"},
+    {"tag":"dadosMercadoriaCodigoNcm","default":"00000000"},
+    {"tag":"dadosMercadoriaCondicao","default":"NOVA"},
+    {"tag":"dadosMercadoriaDescricaoTipoCertificado","default":"Sem Certificado"},
+    {"tag":"dadosMercadoriaIndicadorTipoCertificado","default":"1"},
+    {"tag":"dadosMercadoriaMedidaEstatisticaQuantidade","default":"00000000000000"},
+    {"tag":"dadosMercadoriaMedidaEstatisticaUnidade","default":"UNIDADE"},
+    {"tag":"dadosMercadoriaNomeNcm","default":"DESCRIÇÃO PADRÃO NCM"},
+    {"tag":"dadosMercadoriaPesoLiquido","default":"000000000000000"},
+    {"tag":"dcrCoeficienteReducao","default":"00000"},
+    {"tag":"dcrIdentificacao","default":"00000000"},
+    {"tag":"dcrValorDevido","default":"000000000000000"},
+    {"tag":"dcrValorDolar","default":"000000000000000"},
+    {"tag":"dcrValorReal","default":"000000000000000"},
+    {"tag":"dcrValorRecolher","default":"000000000000000"},
+    {"tag":"fornecedorCidade","default":""},
+    {"tag":"fornecedorLogradouro","default":""},
+    {"tag":"fornecedorNome","default":""},
+    {"tag":"fornecedorNumero","default":""},
+    {"tag":"freteMoedaNegociadaCodigo","default":"978"},
+    {"tag":"freteMoedaNegociadaNome","default":"EURO/COM.EUROPEIA"},
+    {"tag":"freteValorMoedaNegociada","default":"000000000000000"},
+    {"tag":"freteValorReais","default":"000000000000000"},
+    {"tag":"iiAcordoTarifarioTipoCodigo","default":"0"},
+    {"tag":"iiAliquotaAcordo","default":"00000"},
+    {"tag":"iiAliquotaAdValorem","default":"00000"},
+    {"tag":"iiAliquotaPercentualReducao","default":"00000"},
+    {"tag":"iiAliquotaReduzida","default":"00000"},
+    {"tag":"iiAliquotaValorCalculado","default":"000000000000000"},
+    {"tag":"iiAliquotaValorDevido","default":"000000000000000"},
+    {"tag":"iiAliquotaValorRecolher","default":"000000000000000"},
+    {"tag":"iiAliquotaValorReduzido","default":"000000000000000"},
+    {"tag":"iiBaseCalculo","default":"000000000000000"},
+    {"tag":"iiFundamentoLegalCodigo","default":"00"},
+    {"tag":"iiMotivoAdmissaoTemporariaCodigo","default":"00"},
+    {"tag":"iiRegimeTributacaoCodigo","default":"1"},
+    {"tag":"iiRegimeTributacaoNome","default":"RECOLHIMENTO INTEGRAL"},
+    {"tag":"ipiAliquotaAdValorem","default":"00000"},
+    {"tag":"ipiAliquotaEspecificaCapacidadeRecipciente","default":"00000"},
+    {"tag":"ipiAliquotaEspecificaQuantidadeUnidadeMedida","default":"000000000"},
+    {"tag":"ipiAliquotaEspecificaTipoRecipienteCodigo","default":"00"},
+    {"tag":"ipiAliquotaEspecificaValorUnidadeMedida","default":"0000000000"},
+    {"tag":"ipiAliquotaNotaComplementarTIPI","default":"00"},
+    {"tag":"ipiAliquotaReduzida","default":"00000"},
+    {"tag":"ipiAliquotaValorDevido","default":"000000000000000"},
+    {"tag":"ipiAliquotaValorRecolher","default":"000000000000000"},
+    {"tag":"ipiRegimeTributacaoCodigo","default":"4"},
+    {"tag":"ipiRegimeTributacaoNome","default":"SEM BENEFICIO"},
+    {"tag":"mercadoria","type":"complex","children":[
+        {"tag":"descricaoMercadoria","default":""},
+        {"tag":"numeroSequencialItem","default":"01"},
+        {"tag":"quantidade","default":"00000000000000"},
+        {"tag":"unidadeMedida","default":"UNIDADE"},
+        {"tag":"valorUnitario","default":"00000000000000000000"},
+    ]},
+    {"tag":"numeroAdicao","default":"001"},
+    {"tag":"numeroDUIMP","default":""},
+    {"tag":"numeroLI","default":"0000000000"},
+    {"tag":"paisAquisicaoMercadoriaCodigo","default":"000"},
+    {"tag":"paisAquisicaoMercadoriaNome","default":""},
+    {"tag":"paisOrigemMercadoriaCodigo","default":"000"},
+    {"tag":"paisOrigemMercadoriaNome","default":""},
+    {"tag":"pisCofinsBaseCalculoAliquotaICMS","default":"00000"},
+    {"tag":"pisCofinsBaseCalculoFundamentoLegalCodigo","default":"00"},
+    {"tag":"pisCofinsBaseCalculoPercentualReducao","default":"00000"},
+    {"tag":"pisCofinsBaseCalculoValor","default":"000000000000000"},
+    {"tag":"pisCofinsFundamentoLegalReducaoCodigo","default":"00"},
+    {"tag":"pisCofinsRegimeTributacaoCodigo","default":"1"},
+    {"tag":"pisCofinsRegimeTributacaoNome","default":"RECOLHIMENTO INTEGRAL"},
+    {"tag":"pisPasepAliquotaAdValorem","default":"00000"},
+    {"tag":"pisPasepAliquotaEspecificaQuantidadeUnidade","default":"000000000"},
+    {"tag":"pisPasepAliquotaEspecificaValor","default":"0000000000"},
+    {"tag":"pisPasepAliquotaReduzida","default":"00000"},
+    {"tag":"pisPasepAliquotaValorDevido","default":"000000000000000"},
+    {"tag":"pisPasepAliquotaValorRecolher","default":"000000000000000"},
+    {"tag":"icmsBaseCalculoValor","default":"000000000000000"},
+    {"tag":"icmsBaseCalculoAliquota","default":"00000"},
+    {"tag":"icmsBaseCalculoValorImposto","default":"00000000000000"},
+    {"tag":"icmsBaseCalculoValorDiferido","default":"00000000000000"},
+    {"tag":"cbsIbsCst","default":"000"},
+    {"tag":"cbsIbsClasstrib","default":"000001"},
+    {"tag":"cbsBaseCalculoValor","default":"000000000000000"},
+    {"tag":"cbsBaseCalculoAliquota","default":"00000"},
+    {"tag":"cbsBaseCalculoAliquotaReducao","default":"00000"},
+    {"tag":"cbsBaseCalculoValorImposto","default":"00000000000000"},
+    {"tag":"ibsBaseCalculoValor","default":"000000000000000"},
+    {"tag":"ibsBaseCalculoAliquota","default":"00000"},
+    {"tag":"ibsBaseCalculoAliquotaReducao","default":"00000"},
+    {"tag":"ibsBaseCalculoValorImposto","default":"00000000000000"},
+    {"tag":"relacaoCompradorVendedor","default":"Fabricante é desconhecido"},
+    {"tag":"seguroMoedaNegociadaCodigo","default":"220"},
+    {"tag":"seguroMoedaNegociadaNome","default":"DOLAR DOS EUA"},
+    {"tag":"seguroValorMoedaNegociada","default":"000000000000000"},
+    {"tag":"seguroValorReais","default":"000000000000000"},
+    {"tag":"sequencialRetificacao","default":"00"},
+    {"tag":"valorMultaARecolher","default":"000000000000000"},
+    {"tag":"valorMultaARecolherAjustado","default":"000000000000000"},
+    {"tag":"valorReaisFreteInternacional","default":"000000000000000"},
+    {"tag":"valorReaisSeguroInternacional","default":"000000000000000"},
+    {"tag":"valorTotalCondicaoVenda","default":"00000000000"},
+    {"tag":"vinculoCompradorVendedor","default":"Não há vinculação entre comprador e vendedor."},
+]
+
+FOOTER_TAGS = {
+    "armazem":{"tag":"nomeArmazem","default":"TCP"},
+    "armazenamentoRecintoAduaneiroCodigo":"9801303",
+    "armazenamentoRecintoAduaneiroNome":"TCP - TERMINAL",
+    "armazenamentoSetor":"002",
+    "canalSelecaoParametrizada":"001",
+    "caracterizacaoOperacaoCodigoTipo":"1",
+    "caracterizacaoOperacaoDescricaoTipo":"Importação Própria",
+    "cargaDataChegada":"20251120",
+    "cargaNumeroAgente":"N/I",
+    "cargaPaisProcedenciaCodigo":"386",
+    "cargaPaisProcedenciaNome":"",
+    "cargaPesoBruto":"000000000000000",
+    "cargaPesoLiquido":"000000000000000",
+    "cargaUrfEntradaCodigo":"0917800",
+    "cargaUrfEntradaNome":"PORTO DE PARANAGUA",
+    "conhecimentoCargaEmbarqueData":"20251025",
+    "conhecimentoCargaEmbarqueLocal":"EXTERIOR",
+    "conhecimentoCargaId":"CE123456",
+    "conhecimentoCargaIdMaster":"CE123456",
+    "conhecimentoCargaTipoCodigo":"12",
+    "conhecimentoCargaTipoNome":"HBL - House Bill of Lading",
+    "conhecimentoCargaUtilizacao":"1",
+    "conhecimentoCargaUtilizacaoNome":"Total",
+    "dataDesembaraco":"20251124",
+    "dataRegistro":"20251124",
+    "documentoChegadaCargaCodigoTipo":"1",
+    "documentoChegadaCargaNome":"Manifesto da Carga",
+    "documentoChegadaCargaNumero":"1625502058594",
+    "embalagem":[{"tag":"codigoTipoEmbalagem","default":"60"},
+                 {"tag":"nomeEmbalagem","default":"PALLETS"},
+                 {"tag":"quantidadeVolume","default":"00001"}],
+    "freteCollect":"000000000000000",
+    "freteEmTerritorioNacional":"000000000000000",
+    "freteMoedaNegociadaCodigo":"978",
+    "freteMoedaNegociadaNome":"EURO/COM.EUROPEIA",
+    "fretePrepaid":"000000000000000",
+    "freteTotalDolares":"000000000000000",
+    "freteTotalMoeda":"000000000000000",
+    "freteTotalReais":"000000000000000",
+    "icms":[{"tag":"agenciaIcms","default":"00000"},
+            {"tag":"codigoTipoRecolhimentoIcms","default":"3"},
+            {"tag":"nomeTipoRecolhimentoIcms","default":"Exoneração do ICMS"},
+            {"tag":"numeroSequencialIcms","default":"001"},
+            {"tag":"ufIcms","default":"PR"},
+            {"tag":"valorTotalIcms","default":"000000000000000"}],
+    "importadorCodigoTipo":"1",
+    "importadorCpfRepresentanteLegal":"00000000000",
+    "importadorEnderecoBairro":"CENTRO",
+    "importadorEnderecoCep":"00000000",
+    "importadorEnderecoComplemento":"",
+    "importadorEnderecoLogradouro":"RUA PRINCIPAL",
+    "importadorEnderecoMunicipio":"CIDADE",
+    "importadorEnderecoNumero":"00",
+    "importadorEnderecoUf":"PR",
+    "importadorNome":"",
+    "importadorNomeRepresentanteLegal":"REPRESENTANTE",
+    "importadorNumero":"",
+    "importadorNumeroTelefone":"0000000000",
+    "informacaoComplementar":"Informações extraídas do Sistema Integrado DUIMP 2026.",
+    "localDescargaTotalDolares":"000000000000000",
+    "localDescargaTotalReais":"000000000000000",
+    "localEmbarqueTotalDolares":"000000000000000",
+    "localEmbarqueTotalReais":"000000000000000",
+    "modalidadeDespachoCodigo":"1",
+    "modalidadeDespachoNome":"Normal",
+    "numeroDUIMP":"",
+    "operacaoFundap":"N",
+    "pagamento":[],
+    "seguroMoedaNegociadaCodigo":"220",
+    "seguroMoedaNegociadaNome":"DOLAR DOS EUA",
+    "seguroTotalDolares":"000000000000000",
+    "seguroTotalMoedaNegociada":"000000000000000",
+    "seguroTotalReais":"000000000000000",
+    "sequencialRetificacao":"00",
+    "situacaoEntregaCarga":"ENTREGA CONDICIONADA",
+    "tipoDeclaracaoCodigo":"01",
+    "tipoDeclaracaoNome":"CONSUMO",
+    "totalAdicoes":"000",
+    "urfDespachoCodigo":"0917800",
+    "urfDespachoNome":"PORTO DE PARANAGUA",
+    "valorTotalMultaARecolherAjustado":"000000000000000",
+    "viaTransporteCodigo":"01",
+    "viaTransporteMultimodal":"N",
+    "viaTransporteNome":"MARÍTIMA",
+    "viaTransporteNomeTransportador":"MAERSK A/S",
+    "viaTransporteNomeVeiculo":"MAERSK",
+    "viaTransportePaisTransportadorCodigo":"741",
+    "viaTransportePaisTransportadorNome":"CINGAPURA",
+}
+
+
+class DataFormatter:
+    @staticmethod
+    def clean_text(text):
+        if not text: return ""
+        return re.sub(r'\s+', ' ', text.replace('\n',' ').replace('\r','')).strip()
+
+    @staticmethod
+    def format_number(value, length=15):
+        if not value: return "0"*length
+        clean = re.sub(r'\D','',str(value))
+        return clean.zfill(length) if clean else "0"*length
+
+    @staticmethod
+    def format_ncm(value):
+        if not value: return "00000000"
+        return re.sub(r'\D','',value)[:8]
+
+    @staticmethod
+    def format_input_fiscal(value, length=15, is_percent=False):
+        try:
+            if isinstance(value, str):
+                value = value.replace('.','').replace(',','.')
+            return str(int(round(float(value)*100))).zfill(length)
+        except: return "0"*length
+
+    @staticmethod
+    def format_high_precision(value, length=15):
+        try:
+            if isinstance(value, str):
+                value = value.replace('.','').replace(',','.')
+            return str(int(round(float(value)*10000000))).zfill(length)
+        except: return "0"*length
+
+    @staticmethod
+    def format_quantity(value, length=14):
+        try:
+            if isinstance(value, str):
+                value = value.replace('.','').replace(',','.')
+            return str(int(round(float(value)*100000))).zfill(length)
+        except: return "0"*length
+
+    @staticmethod
+    def calculate_cbs_ibs(base_xml_string):
+        try:
+            bf = int(base_xml_string)/100.0
+            cbs = str(int(round(bf*0.009*100))).zfill(14)
+            ibs = str(int(round(bf*0.001*100))).zfill(14)
+            return cbs, ibs
+        except: return "0".zfill(14), "0".zfill(14)
+
+    @staticmethod
+    def parse_supplier_info(raw_name, raw_addr):
+        data = {"fornecedorNome":"","fornecedorLogradouro":"","fornecedorNumero":"S/N","fornecedorCidade":""}
+        if raw_name:
+            parts = raw_name.split('-',1)
+            data["fornecedorNome"] = parts[-1].strip() if len(parts)>1 else raw_name.strip()
+        if raw_addr:
+            ca = DataFormatter.clean_text(raw_addr)
+            pd_ = ca.rsplit('-',1)
+            if len(pd_)>1:
+                data["fornecedorCidade"] = pd_[1].strip()
+                street = pd_[0].strip()
+            else:
+                data["fornecedorCidade"] = "EXTERIOR"; street = ca
+            cs = street.rsplit(',',1)
+            if len(cs)>1:
+                data["fornecedorLogradouro"] = cs[0].strip()
+                m = re.search(r'\d+', cs[1])
+                if m: data["fornecedorNumero"] = m.group(0)
+            else:
+                data["fornecedorLogradouro"] = street
+        return data
+
+
+class XMLBuilder:
+    def __init__(self, parser, edited_items=None):
+        self.p = parser
+        self.items_to_use = edited_items if edited_items else self.p.items
+        self.root  = etree.Element("ListaDeclaracoes")
+        self.duimp = etree.SubElement(self.root, "duimp")
+
+    def build(self, user_inputs=None):
+        h = self.p.header
+        duimp_fmt = h.get("numeroDUIMP","").split("/")[0].replace("-","").replace(".","")
+        totals = {"frete":0.0,"seguro":0.0,"ii":0.0,"ipi":0.0,"pis":0.0,"cofins":0.0}
+
+        def gf(val):
+            try:
+                if isinstance(val,str): val=val.replace('.','').replace(',','.')
+                return float(val)
+            except: return 0.0
+
+        for it in self.items_to_use:
+            totals["frete"]  += gf(it.get("Frete (R$)"))
+            totals["seguro"] += gf(it.get("Seguro (R$)"))
+            totals["ii"]     += gf(it.get("II (R$)"))
+            totals["ipi"]    += gf(it.get("IPI (R$)"))
+            totals["pis"]    += gf(it.get("PIS (R$)"))
+            totals["cofins"] += gf(it.get("COFINS (R$)"))
+
+        for it in self.items_to_use:
+            adicao = etree.SubElement(self.duimp, "adicao")
+            input_number  = str(it.get("NUMBER","")).strip()
+            original_desc = DataFormatter.clean_text(it.get("descricao",""))
+            desc_compl    = DataFormatter.clean_text(it.get("desc_complementar",""))
+            final_desc    = montar_descricao_final(desc_compl, input_number, original_desc)
+            vtvf  = DataFormatter.format_high_precision(it.get("valorTotal","0"), 11)
+            vuf   = DataFormatter.format_high_precision(it.get("valorUnit","0"), 20)
+            qcr   = it.get("quantidade_comercial") or it.get("quantidade")
+            qcf   = DataFormatter.format_quantity(qcr, 14)
+            qef   = DataFormatter.format_quantity(it.get("quantidade"), 14)
+            plf   = DataFormatter.format_quantity(it.get("pesoLiq"), 15)
+            btrf  = DataFormatter.format_input_fiscal(it.get("valorTotal","0"), 15)
+            rf    = gf(it.get("Frete (R$)",0))
+            rs    = gf(it.get("Seguro (R$)",0))
+            ra    = gf(it.get("Aduaneiro (R$)",0))
+            ff    = DataFormatter.format_input_fiscal(rf)
+            sf    = DataFormatter.format_input_fiscal(rs)
+            af    = DataFormatter.format_input_fiscal(ra)
+            iibf  = DataFormatter.format_input_fiscal(it.get("II Base (R$)",0))
+            iiaf  = DataFormatter.format_input_fiscal(it.get("II Alíq. (%)",0),5,True)
+            iivf  = DataFormatter.format_input_fiscal(gf(it.get("II (R$)",0)))
+            ipiaf = DataFormatter.format_input_fiscal(it.get("IPI Alíq. (%)",0),5,True)
+            ipivf = DataFormatter.format_input_fiscal(gf(it.get("IPI (R$)",0)))
+            pisbf = DataFormatter.format_input_fiscal(it.get("PIS Base (R$)",0))
+            pisaf = DataFormatter.format_input_fiscal(it.get("PIS Alíq. (%)",0),5,True)
+            pisvf = DataFormatter.format_input_fiscal(gf(it.get("PIS (R$)",0)))
+            cofaf = DataFormatter.format_input_fiscal(it.get("COFINS Alíq. (%)",0),5,True)
+            cofvf = DataFormatter.format_input_fiscal(gf(it.get("COFINS (R$)",0)))
+            icms_base = iibf if int(iibf)>0 else btrf
+            cbs_imp, ibs_imp = DataFormatter.calculate_cbs_ibs(icms_base)
+            sup = DataFormatter.parse_supplier_info(it.get("fornecedor_raw"), it.get("endereco_raw"))
+            emap = {
+                "numeroAdicao":str(it["numeroAdicao"])[-3:],
+                "numeroDUIMP":duimp_fmt,
+                "dadosMercadoriaCodigoNcm":DataFormatter.format_ncm(it.get("ncm")),
+                "dadosMercadoriaMedidaEstatisticaQuantidade":qef,
+                "dadosMercadoriaMedidaEstatisticaUnidade":it.get("unidade","").upper(),
+                "dadosMercadoriaPesoLiquido":plf,
+                "condicaoVendaMoedaNome":it.get("moeda","").upper(),
+                "valorTotalCondicaoVenda":vtvf,
+                "valorUnitario":vuf,
+                "condicaoVendaValorMoeda":btrf,
+                "condicaoVendaValorReais":af if int(af)>0 else btrf,
+                "paisOrigemMercadoriaNome":it.get("paisOrigem","").upper(),
+                "paisAquisicaoMercadoriaNome":it.get("paisOrigem","").upper(),
+                "descricaoMercadoria":final_desc,
+                "quantidade":qcf,
+                "unidadeMedida":it.get("unidade","").upper(),
+                "dadosCargaUrfEntradaCodigo":h.get("urf","0917800"),
+                "fornecedorNome":sup["fornecedorNome"][:60],
+                "fornecedorLogradouro":sup["fornecedorLogradouro"][:60],
+                "fornecedorNumero":sup["fornecedorNumero"][:10],
+                "fornecedorCidade":sup["fornecedorCidade"][:30],
+                "freteValorReais":ff,"seguroValorReais":sf,
+                "iiBaseCalculo":iibf,"iiAliquotaAdValorem":iiaf,
+                "iiAliquotaValorCalculado":iivf,"iiAliquotaValorDevido":iivf,"iiAliquotaValorRecolher":iivf,
+                "ipiAliquotaAdValorem":ipiaf,"ipiAliquotaValorDevido":ipivf,"ipiAliquotaValorRecolher":ipivf,
+                "pisCofinsBaseCalculoValor":pisbf,"pisPasepAliquotaAdValorem":pisaf,
+                "pisPasepAliquotaValorDevido":pisvf,"pisPasepAliquotaValorRecolher":pisvf,
+                "cofinsAliquotaAdValorem":cofaf,"cofinsAliquotaValorDevido":cofvf,"cofinsAliquotaValorRecolher":cofvf,
+                "icmsBaseCalculoValor":icms_base,"icmsBaseCalculoAliquota":"01800",
+                "cbsIbsClasstrib":"000001","cbsBaseCalculoValor":icms_base,
+                "cbsBaseCalculoAliquota":"00090","cbsBaseCalculoValorImposto":cbs_imp,
+                "ibsBaseCalculoValor":icms_base,"ibsBaseCalculoAliquota":"00010","ibsBaseCalculoValorImposto":ibs_imp,
+            }
+            for field in ADICAO_FIELDS_ORDER:
+                tag = field["tag"]
+                if field.get("type") == "complex":
+                    parent = etree.SubElement(adicao, tag)
+                    for child in field["children"]:
+                        etree.SubElement(parent, child["tag"]).text = emap.get(child["tag"], child["default"])
+                else:
+                    etree.SubElement(adicao, tag).text = emap.get(tag, field["default"])
+
+        pbf  = DataFormatter.format_quantity(h.get("pesoBruto"), 15)
+        plf2 = DataFormatter.format_quantity(h.get("pesoLiquido"), 15)
+        fmap = {
+            "numeroDUIMP":duimp_fmt,
+            "importadorNome":h.get("nomeImportador",""),
+            "importadorNumero":DataFormatter.format_number(h.get("cnpj"),14),
+            "cargaPesoBruto":pbf,"cargaPesoLiquido":plf2,
+            "cargaPaisProcedenciaNome":h.get("paisProcedencia","").upper(),
+            "totalAdicoes":str(len(self.items_to_use)).zfill(3),
+            "freteTotalReais":DataFormatter.format_input_fiscal(totals["frete"]),
+            "seguroTotalReais":DataFormatter.format_input_fiscal(totals["seguro"]),
+        }
+        if user_inputs:
+            for k in ["cargaDataChegada","dataDesembaraco","dataRegistro","conhecimentoCargaEmbarqueData",
+                      "cargaPesoBruto","cargaPesoLiquido","localDescargaTotalDolares","localDescargaTotalReais",
+                      "localEmbarqueTotalDolares","localEmbarqueTotalReais"]:
+                if k in user_inputs: fmap[k] = user_inputs[k]
+
+        receitas = [
+            {"code":"0086","val":totals["ii"]},{"code":"1038","val":totals["ipi"]},
+            {"code":"5602","val":totals["pis"]},{"code":"5629","val":totals["cofins"]},
+        ]
+        if user_inputs and user_inputs.get("valorReceita7811","0") not in ("0","000000000000000"):
+            receitas.append({"code":"7811","val":float(user_inputs["valorReceita7811"])})
+
+        for tag, dval in FOOTER_TAGS.items():
+            if tag == "embalagem" and user_inputs:
+                parent = etree.SubElement(self.duimp, tag)
+                for sf in dval:
+                    v = user_inputs.get("quantidadeVolume", sf["default"]) if sf["tag"]=="quantidadeVolume" else sf["default"]
+                    etree.SubElement(parent, sf["tag"]).text = v
+                continue
+            if tag == "pagamento":
+                agencia = user_inputs.get("agenciaPagamento","3715") if user_inputs else "3715"
+                banco   = user_inputs.get("bancoPagamento","341")   if user_inputs else "341"
+                for rec in receitas:
+                    if rec["val"] > 0:
+                        pag = etree.SubElement(self.duimp, "pagamento")
+                        etree.SubElement(pag, "agenciaPagamento").text = agencia
+                        etree.SubElement(pag, "bancoPagamento").text   = banco
+                        etree.SubElement(pag, "codigoReceita").text    = rec["code"]
+                        if rec["code"]=="7811" and user_inputs:
+                            etree.SubElement(pag, "valorReceita").text = user_inputs["valorReceita7811"].zfill(15)
+                        else:
+                            etree.SubElement(pag, "valorReceita").text = DataFormatter.format_input_fiscal(rec["val"])
+                continue
+            if tag in fmap:
+                etree.SubElement(self.duimp, tag).text = fmap[tag]; continue
+            if user_inputs and tag in user_inputs:
+                etree.SubElement(self.duimp, tag).text = user_inputs[tag]; continue
+            if isinstance(dval, list):
+                parent = etree.SubElement(self.duimp, tag)
+                for sf in dval: etree.SubElement(parent, sf["tag"]).text = sf["default"]
+            elif isinstance(dval, dict):
+                parent = etree.SubElement(self.duimp, tag)
+                etree.SubElement(parent, dval["tag"]).text = dval["default"]
+            else:
+                etree.SubElement(self.duimp, tag).text = fmap.get(tag, dval)
+
+        xml_bytes = etree.tostring(self.root, pretty_print=True, encoding="UTF-8", xml_declaration=False)
+        return b'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n' + xml_bytes
+
+
+# ==============================================================================
+# PARTE 6 — _merge_app2_items + _render_totais_grade
+# ==============================================================================
+def _merge_app2_items(df_dest: pd.DataFrame, itens: list) -> tuple:
+    src_map: Dict[int, Dict] = {}
+    for item in itens:
+        try: src_map[int(item['numero_item'])] = item
+        except Exception: pass
+
+    count, not_found = 0, []
+    for idx, row in df_dest.iterrows():
+        try:
+            num = int(str(row['numeroAdicao']).strip())
+            if num not in src_map: not_found.append(num); continue
+            src = src_map[num]
+            df_dest.at[idx,'NUMBER']           = src.get('codigo_interno','')
+            df_dest.at[idx,'Frete (R$)']       = src.get('frete_internacional',0.0)
+            df_dest.at[idx,'Seguro (R$)']      = src.get('seguro_internacional',0.0)
+            df_dest.at[idx,'Aduaneiro (R$)']   = src.get('aduaneiro_reais',
+                                                   src.get('valorAduaneiroReal',
+                                                   src.get('local_aduaneiro',0.0)))
+            df_dest.at[idx,'II (R$)']          = src.get('ii_valor_devido',0.0)
+            df_dest.at[idx,'II Base (R$)']     = src.get('ii_base_calculo',
+                                                   src.get('aduaneiro_reais',
+                                                   src.get('valorAduaneiroReal',0.0)))
+            df_dest.at[idx,'II Alíq. (%)']     = src.get('ii_aliquota',0.0)
+            df_dest.at[idx,'IPI (R$)']         = src.get('ipi_valor_devido',0.0)
+            df_dest.at[idx,'IPI Base (R$)']    = src.get('ipi_base_calculo',0.0)
+            df_dest.at[idx,'IPI Alíq. (%)']    = src.get('ipi_aliquota',0.0)
+            df_dest.at[idx,'PIS (R$)']         = src.get('pis_valor_devido',0.0)
+            df_dest.at[idx,'PIS Base (R$)']    = src.get('pis_base_calculo',0.0)
+            df_dest.at[idx,'PIS Alíq. (%)']    = src.get('pis_aliquota',0.0)
+            df_dest.at[idx,'COFINS (R$)']      = src.get('cofins_valor_devido',0.0)
+            df_dest.at[idx,'COFINS Base (R$)'] = src.get('cofins_base_calculo',0.0)
+            df_dest.at[idx,'COFINS Alíq. (%)'] = src.get('cofins_aliquota',0.0)
+            count += 1
+        except Exception: continue
+    return df_dest, count, not_found
+
+
+def _render_totais_grade(df: pd.DataFrame):
+    def _s(col): return pd.to_numeric(df[col], errors='coerce').sum() if col in df.columns else 0
+    t1,t2,t3,t4,t5,t6 = st.columns(6)
+    t1.metric("II Total",     f"R$ {_s('II (R$)'):,.2f}")
+    t2.metric("IPI Total",    f"R$ {_s('IPI (R$)'):,.2f}")
+    t3.metric("PIS Total",    f"R$ {_s('PIS (R$)'):,.2f}")
+    t4.metric("COFINS Total", f"R$ {_s('COFINS (R$)'):,.2f}")
+    t5.metric("Frete Total",  f"R$ {_s('Frete (R$)'):,.2f}")
+    t6.metric("Seguro Total", f"R$ {_s('Seguro (R$)'):,.2f}")
+
+
+# ==============================================================================
+# PARTE 7 — SISTEMA INTEGRADO DUIMP
+# ==============================================================================
+def sistema_integrado_duimp():
+    page_header("📊", "Sistema Integrado DUIMP 2026",
+                "Upload · Vinculação · Conferência · Geração de XML 8686")
+
+    tab_up, tab_conf, tab_xml = st.tabs([
+        "📂  Upload & Vinculação",
+        "📋  Conferência",
+        "💾  Exportar XML",
+    ])
+
+    # ══════════════════════════════════════════════════════════════════════
+    # TAB 1 — UPLOAD & VINCULAÇÃO
+    # ══════════════════════════════════════════════════════════════════════
+    with tab_up:
+        section_title("⚙️ Formato do Arquivo de Tributos (APP2)")
+        col_radio, col_badge = st.columns([3, 1], gap="large")
+
+        with col_radio:
+            layout_choice = st.radio(
+                "Selecione o layout do APP2",
+                options=[
+                    "🔵  Sigraweb — Conferência do Processo Detalhado (layout novo)",
+                    "🟠  Extrato DUIMP — Itens da DUIMP (layout antigo)",
+                ],
+                index=0 if st.session_state["layout_app2"] == "sigraweb" else 1,
+                key="layout_radio",
+                horizontal=False,
+            )
+            novo = "sigraweb" if layout_choice.startswith("🔵") else "extrato_duimp"
+            if novo != st.session_state["layout_app2"]:
+                st.session_state["layout_app2"]     = novo
+                st.session_state["parsed_sigraweb"] = None
+                st.session_state["merged_df"]       = None
+                st.rerun()
+
+        with col_badge:
+            is_sgw = st.session_state["layout_app2"] == "sigraweb"
+            bc  = "lbadge" if is_sgw else "lbadge amber"
+            btx = "🔵 Sigraweb (ativo)" if is_sgw else "🟠 Extrato DUIMP (ativo)"
+            ph(f'<div class="{bc}">{btx}</div>')
+
+        st.divider()
+
+        section_title("📂 Carregar Arquivos")
+        c1, c2 = st.columns(2, gap="large")
+
+        with c1:
+            ph("""<div class="uzone">
+                <div class="uzone-icon">📄</div>
+                <div class="uzone-title">Passo 1 — Extrato DUIMP</div>
+                <div class="uzone-sub">Siscomex · PDF</div></div>""")
+            file_duimp = st.file_uploader("Arquivo DUIMP (PDF)", type="pdf", key="u1")
+
+        with c2:
+            lbl2 = "Sigraweb · Conferência Detalhada" if is_sgw else "Extrato DUIMP · Itens"
+            ph(f"""<div class="uzone">
+                <div class="uzone-icon">📑</div>
+                <div class="uzone-title">Passo 2 — {lbl2}</div>
+                <div class="uzone-sub">PDF</div></div>""")
+            key2  = "Arquivo Sigraweb (PDF)" if is_sgw else "Arquivo Extrato DUIMP (PDF)"
+            file_app2 = st.file_uploader(key2, type="pdf", key="u2")
+
+        if file_duimp:
+            if (st.session_state["parsed_duimp"] is None or
+                    file_duimp.name != getattr(st.session_state.get("last_duimp"),"name","")):
+                _td_path = None
+                try:
+                    with tempfile.NamedTemporaryFile(delete=False, suffix='.pdf') as _td:
+                        _td.write(file_duimp.read())
+                        _td_path = _td.name
+
+                    p = DuimpPDFParser(_td_path)
+                    p.preprocess(); p.extract_header(); p.extract_items()
+                    st.session_state["parsed_duimp"] = p
+                    st.session_state["last_duimp"]   = file_duimp
+                    df = pd.DataFrame(p.items)
+                    for col in ["NUMBER","Frete (R$)","Seguro (R$)",
+                                "II (R$)","II Base (R$)","II Alíq. (%)",
+                                "IPI (R$)","IPI Base (R$)","IPI Alíq. (%)",
+                                "PIS (R$)","PIS Base (R$)","PIS Alíq. (%)",
+                                "COFINS (R$)","COFINS Base (R$)","COFINS Alíq. (%)","Aduaneiro (R$)"]:
+                        df[col] = 0.00 if col != "NUMBER" else ""
+                    st.session_state["merged_df"] = df
+                    status_ok(f"DUIMP lida — {len(p.items)} adições encontradas.")
+                except Exception as e:
+                    st.error(f"Erro ao ler DUIMP: {e}")
+                finally:
+                    if _td_path and os.path.exists(_td_path):
+                        try: os.unlink(_td_path)
+                        except Exception: pass
+
+        if file_app2 and st.session_state["parsed_sigraweb"] is None:
+            with tempfile.NamedTemporaryFile(delete=False, suffix='.pdf') as tmp:
+                tmp.write(file_app2.getvalue()); tmp_path = tmp.name
+            try:
+                parser_a2 = SigrawebPDFParser() if is_sgw else HafelePDFParser()
+                doc_a2    = parser_a2.parse_pdf(tmp_path)
+                st.session_state["parsed_sigraweb"] = doc_a2
+                n = len(doc_a2['itens'])
+                if n > 0:
+                    lname = "Sigraweb" if is_sgw else "Extrato DUIMP"
+                    status_ok(f"{lname} lido — {n} itens encontrados.")
+                    if is_sgw:
+                        cab = doc_a2.get('cabecalho',{})
+                        tot = doc_a2.get('totais',{})
+                        with st.expander("📋 Resumo do Processo (Sigraweb)", expanded=True):
+                            r1,r2,r3,r4 = st.columns(4)
+                            r1.metric("Número DI",       cab.get('numeroDI','N/A'))
+                            r2.metric("Adições",         n)
+                            r3.metric("Peso Bruto (kg)", cab.get('pesoBruto','N/A'))
+                            r4.metric("Via Transporte",  cab.get('viaTransporte','N/A'))
+                            m1,m2,m3,m4 = st.columns(4)
+                            m1.metric("II Total",   f"R$ {tot.get('total_ii',0):,.2f}")
+                            m2.metric("IPI Total",  f"R$ {tot.get('total_ipi',0):,.2f}")
+                            m3.metric("PIS Total",  f"R$ {tot.get('total_pis',0):,.2f}")
+                            m4.metric("COFINS Total",f"R$ {tot.get('total_cofins',0):,.2f}")
+                            n1,n2,n3,n4 = st.columns(4)
+                            n1.metric("Vlr Adu. (R$)", f"R$ {tot.get('total_valor_aduaneiro',0):,.2f}")
+                            n2.metric("Frete (R$)",    f"R$ {tot.get('total_frete',0):,.2f}")
+                            n3.metric("Seguro (R$)",   f"R$ {tot.get('total_seguro',0):,.2f}")
+                            n4.metric("Peso Líq. (kg)",f"{tot.get('peso_liquido_total',0):,.2f}")
+                    else:
+                        tot = doc_a2.get('totais',{})
+                        with st.expander("📋 Resumo Extrato DUIMP", expanded=True):
+                            e1,e2,e3,e4 = st.columns(4)
+                            e1.metric("Itens",       n)
+                            e2.metric("II Total",    f"R$ {tot.get('total_ii',0):,.2f}")
+                            e3.metric("PIS Total",   f"R$ {tot.get('total_pis',0):,.2f}")
+                            e4.metric("COFINS Total",f"R$ {tot.get('total_cofins',0):,.2f}")
+                else:
+                    st.warning("Nenhum item detectado. Verifique se o layout selecionado está correto.")
+            except Exception as e:
+                st.error(f"Erro ao ler APP2: {e}")
+                st.code(traceback.format_exc())
+            finally:
+                if os.path.exists(tmp_path):
+                    try: os.unlink(tmp_path)
+                    except Exception: pass
+
+        st.divider()
+        section_title("🔗 Ações")
+        col_btn, col_reset = st.columns([2, 1], gap="large")
+
+        with col_btn:
+            if st.button("🔗 VINCULAR DADOS (Cruzamento Automático)",
+                         type="primary", use_container_width=True):
+                if (st.session_state["merged_df"] is not None and
+                        st.session_state["parsed_sigraweb"] is not None):
+                    try:
+                        doc_a2  = st.session_state["parsed_sigraweb"]
+                        df_dest = st.session_state["merged_df"].copy()
+                        df_dest, count, nf = _merge_app2_items(df_dest, doc_a2['itens'])
+                        st.session_state["merged_df"] = df_dest
+                        st.success(f"✅ **{count}** adições vinculadas.")
+                        if nf: st.warning(f"⚠️ {len(nf)} não encontradas: {nf}")
+                        with st.expander("📊 Resumo da Vinculação"):
+                            _render_totais_grade(df_dest)
+                    except Exception as e:
+                        st.error(f"Erro na vinculação: {e}"); st.code(traceback.format_exc())
+                else:
+                    st.warning("Carregue os dois arquivos antes de vincular.")
+
+        with col_reset:
+            st.markdown('<div style="height:.05rem"></div>', unsafe_allow_html=True)
+            rc1, rc2 = st.columns(2)
+            with rc1:
+                if st.button("🔄 DUIMP", type="secondary", use_container_width=True):
+                    st.session_state["parsed_duimp"] = None
+                    st.session_state["merged_df"]    = None
+                    st.rerun()
+            with rc2:
+                if st.button("🔄 APP2", type="secondary", use_container_width=True):
+                    st.session_state["parsed_sigraweb"] = None; st.rerun()
+            if st.button("🗑️ Limpar Tudo", type="secondary", use_container_width=True):
+                for k in ["parsed_duimp","parsed_sigraweb","merged_df","last_duimp"]:
+                    st.session_state[k] = None
+                st.rerun()
+
+    # ══════════════════════════════════════════════════════════════════════
+    # TAB 2 — CONFERÊNCIA (inalterada)
+    # ══════════════════════════════════════════════════════════════════════
+    with tab_conf:
+        section_title("📋 Conferência e Edição")
+
+        doc_a2 = st.session_state.get("parsed_sigraweb")
+        if doc_a2:
+            itens_a2 = doc_a2.get('itens',[])
+
+            if st.session_state["layout_app2"] == "sigraweb":
+                cab = doc_a2.get('cabecalho',{})
+                with st.expander("📄 Dados do Processo — Sigraweb"):
+                    dados = {"Campo":["Número DI","SIGRAWEB ID","Empresa","CNPJ",
+                                      "URF Entrada","Via Transporte","País Procedência",
+                                      "Incoterms","IDT Conhecimento","IDT Master",
+                                      "Data Embarque","Data Chegada","Data Registro",
+                                      "Peso Bruto (kg)","Peso Líquido (kg)","Volumes",
+                                      "Embalagem","Banco","Agência","Taxa EUR","Taxa USD",
+                                      "FOB EUR","FOB BRL","Frete USD","Frete BRL",
+                                      "Seguro USD","Seguro BRL","CIF USD","CIF BRL",
+                                      "Vlr Aduaneiro USD","Vlr Aduaneiro BRL"],
+                             "Valor":[cab.get(k,'') for k in [
+                                 'numeroDI','sigraweb','nomeImportador','cnpj',
+                                 'urf','viaTransporte','paisProcedencia','incoterms',
+                                 'idtConhecimento','idtMaster','dataEmbarque','dataChegada',
+                                 'dataRegistro','pesoBruto','pesoLiquido','volumes',
+                                 'embalagem','banco','agencia','taxaEUR','taxaDolar',
+                                 'fobEUR','fobBRL','freteUSD','freteBRL',
+                                 'seguroUSD','seguroBRL','cifUSD','cifBRL',
+                                 'valorAduaneiroUSD','valorAduaneiroBRL']]}
+                    st.dataframe(pd.DataFrame(dados), use_container_width=True, hide_index=True)
+
+            lbl_exp = "Sigraweb" if st.session_state["layout_app2"]=="sigraweb" else "Extrato DUIMP"
+            with st.expander(f"📑 Adições Extraídas — {lbl_exp}"):
+                if itens_a2:
+                    rows = [{
+                        'Adição':       it.get('numeroAdicao',''),
+                        'Part Number':  it.get('codigo_interno',''),
+                        'NCM':          it.get('ncm',''),
+                        'Descrição':    str(it.get('descricao',it.get('nome_produto','')))[:55],
+                        'País':         it.get('paisOrigem',''),
+                        'Qtd Est.':     it.get('quantidade',0),
+                        'Qtd Com.':     it.get('quantidade_comercial',0),
+                        'Und':          it.get('unidade',''),
+                        'Peso Líq.':    it.get('pesoLiq',it.get('peso_liquido',0)),
+                        'Vlr Adu. BRL': it.get('aduaneiro_reais',it.get('valorAduaneiroReal',it.get('local_aduaneiro',0))),
+                        'Frete BRL':    it.get('frete_internacional',0),
+                        'Seguro BRL':   it.get('seguro_internacional',0),
+                        'II %':         it.get('ii_aliquota',0),
+                        'II Base':      it.get('ii_base_calculo',0),
+                        'II R$':        it.get('ii_valor_devido',0),
+                        'IPI %':        it.get('ipi_aliquota',0),
+                        'IPI R$':       it.get('ipi_valor_devido',0),
+                        'PIS %':        it.get('pis_aliquota',0),
+                        'PIS R$':       it.get('pis_valor_devido',0),
+                        'COFINS %':     it.get('cofins_aliquota',0),
+                        'COFINS R$':    it.get('cofins_valor_devido',0),
+                        'Total Imp.':   it.get('total_impostos',0),
+                    } for it in itens_a2]
+                    dfa2 = pd.DataFrame(rows)
+                    st.dataframe(dfa2, use_container_width=True, height=340)
+                    tt1,tt2,tt3,tt4,tt5 = st.columns(5)
+                    tt1.metric("Vlr Adu. Total",f"R$ {dfa2['Vlr Adu. BRL'].sum():,.2f}")
+                    tt2.metric("II Total",      f"R$ {dfa2['II R$'].sum():,.2f}")
+                    tt3.metric("IPI Total",     f"R$ {dfa2['IPI R$'].sum():,.2f}")
+                    tt4.metric("PIS Total",     f"R$ {dfa2['PIS R$'].sum():,.2f}")
+                    tt5.metric("COFINS Total",  f"R$ {dfa2['COFINS R$'].sum():,.2f}")
+                else:
+                    st.info("Nenhum item extraído.")
+
+        if st.session_state["merged_df"] is not None:
+            section_title("✏️ Grade de Edição — DUIMP + APP2")
+            ccfg = {
+                "numeroAdicao":     st.column_config.TextColumn("Item",      width="small",  disabled=True),
+                "NUMBER":           st.column_config.TextColumn("Part Number",width="medium"),
+                "ncm":              st.column_config.TextColumn("NCM",       width="small",  disabled=True),
+                "descricao":        st.column_config.TextColumn("Descrição", width="large",  disabled=True),
+                "quantidade":       st.column_config.TextColumn("Qtd Est.",  disabled=True),
+                "quantidade_comercial": st.column_config.TextColumn("Qtd Com.", disabled=True),
+                "unidade":          st.column_config.TextColumn("Unidade",   disabled=True),
+                "pesoLiq":          st.column_config.TextColumn("Peso Líq.", disabled=True),
+                "valorTotal":       st.column_config.TextColumn("FOB",       disabled=True),
+                "Frete (R$)":       st.column_config.NumberColumn(format="R$ %.2f"),
+                "Seguro (R$)":      st.column_config.NumberColumn(format="R$ %.2f"),
+                "Aduaneiro (R$)":   st.column_config.NumberColumn("Vlr Adu.", format="R$ %.2f"),
+                "II Base (R$)":     st.column_config.NumberColumn("II Base",  format="R$ %.2f"),
+                "II Alíq. (%)":     st.column_config.NumberColumn("II %",    format="%.4f"),
+                "II (R$)":          st.column_config.NumberColumn("II R$",   format="R$ %.2f"),
+                "IPI Base (R$)":    st.column_config.NumberColumn("IPI Base", format="R$ %.2f"),
+                "IPI Alíq. (%)":    st.column_config.NumberColumn("IPI %",   format="%.4f"),
+                "IPI (R$)":         st.column_config.NumberColumn("IPI R$",  format="R$ %.2f"),
+                "PIS Base (R$)":    st.column_config.NumberColumn("PIS Base", format="R$ %.2f"),
+                "PIS Alíq. (%)":    st.column_config.NumberColumn("PIS %",   format="%.4f"),
+                "PIS (R$)":         st.column_config.NumberColumn("PIS R$",  format="R$ %.2f"),
+                "COFINS Base (R$)": st.column_config.NumberColumn("COF Base", format="R$ %.2f"),
+                "COFINS Alíq. (%)": st.column_config.NumberColumn("COF %",   format="%.4f"),
+                "COFINS (R$)":      st.column_config.NumberColumn("COF R$",  format="R$ %.2f"),
+            }
+            edf = st.data_editor(st.session_state["merged_df"],
+                                 hide_index=True, column_config=ccfg,
+                                 use_container_width=True, height=540)
+            for tax in ['II','IPI','PIS','COFINS']:
+                bc_ = f"{tax} Base (R$)"; ac_ = f"{tax} Alíq. (%)"; vc_ = f"{tax} (R$)"
+                if bc_ in edf.columns and ac_ in edf.columns:
+                    edf[bc_] = pd.to_numeric(edf[bc_], errors='coerce').fillna(0.0)
+                    edf[ac_] = pd.to_numeric(edf[ac_], errors='coerce').fillna(0.0)
+                    edf[vc_] = edf[bc_] * (edf[ac_] / 100.0)
+            st.session_state["merged_df"] = edf
+            section_title("📊 Totais da Grade")
+            _render_totais_grade(edf)
+        else:
+            empty_state("📋", "Nenhum dado vinculado ainda",
+                        "Carregue os arquivos e execute a vinculação na aba Upload")
+
+    # ══════════════════════════════════════════════════════════════════════
+    # TAB 3 — EXPORTAR XML (inalterada)
+    # ══════════════════════════════════════════════════════════════════════
+    with tab_xml:
+        section_title("⚙️ Configurações do XML Final (Layout 8686)")
+
+        cab_sgw = {}
+        if (st.session_state.get("parsed_sigraweb") and
+                st.session_state["layout_app2"] == "sigraweb"):
+            cab_sgw = st.session_state["parsed_sigraweb"].get("cabecalho",{})
+
+        with st.expander("📅 Datas, Pesos e Locais", expanded=True):
+            xc1, xc2, xc3 = st.columns(3, gap="large")
+            with xc1:
+                st.markdown("**Quantidade & Datas**")
+                _v = cab_sgw.get('volumes','')
+                inp_vol    = st.text_input("Qtd. Volume",      value=str(_v).zfill(5) if _v else '00001')
+                inp_cheg   = st.text_input("Data Chegada",     value=cab_sgw.get('dataChegadaISO','20251120') or '20251120')
+                inp_desemb = st.text_input("Data Desembaraço", value=cab_sgw.get('dataRegistro','20251124') or '20251124')
+                inp_reg    = st.text_input("Data Registro",    value=cab_sgw.get('dataRegistro','20251124') or '20251124')
+                inp_emb    = st.text_input("Data Embarque",    value=cab_sgw.get('dataEmbarqueISO','20251025') or '20251025')
+            with xc2:
+                st.markdown("**Pesos (formato XML)**")
+                _pb = DataFormatter.format_quantity(cab_sgw.get('pesoBruto','0'),15) if cab_sgw.get('pesoBruto') else '000000000000000'
+                _pl = DataFormatter.format_quantity(cab_sgw.get('pesoLiquido','0'),15) if cab_sgw.get('pesoLiquido') else '000000000000000'
+                inp_pb  = st.text_input("Peso Bruto (XML)",   value=_pb)
+                inp_pl  = st.text_input("Peso Líquido (XML)", value=_pl)
+                st.markdown("**Locais (R$ / US$)**")
+                inp_ldd = st.text_input("Descarga US$", value="000000000000000")
+                inp_ldr = st.text_input("Descarga R$",  value="000000000000000")
+                inp_led = st.text_input("Embarque US$", value="000000000000000")
+                inp_ler = st.text_input("Embarque R$",  value="000000000000000")
+            with xc3:
+                st.markdown("**Pagamento & Conhecimento**")
+                inp_ag  = st.text_input("Agência",         value=cab_sgw.get('agencia','3715') or '3715')
+                inp_bco = st.text_input("Banco",           value="341")
+                inp_idc = st.text_input("IDT Conhecimento",value=cab_sgw.get('idtConhecimento','CE123456') or 'CE123456')
+                inp_idm = st.text_input("IDT Master",      value=cab_sgw.get('idtMaster','CE123456') or 'CE123456')
+                st.markdown("**Receita 7811**")
+                inp_r78 = st.text_input("Valor 7811", value="000000000000000")
+
+        user_xml = {
+            "quantidadeVolume":              inp_vol,
+            "cargaDataChegada":              inp_cheg,
+            "dataDesembaraco":               inp_desemb,
+            "dataRegistro":                  inp_reg,
+            "conhecimentoCargaEmbarqueData": inp_emb,
+            "cargaPesoBruto":                inp_pb,
+            "cargaPesoLiquido":              inp_pl,
+            "agenciaPagamento":              inp_ag,
+            "bancoPagamento":                inp_bco,
+            "valorReceita7811":              inp_r78,
+            "localDescargaTotalDolares":     inp_ldd,
+            "localDescargaTotalReais":       inp_ldr,
+            "localEmbarqueTotalDolares":     inp_led,
+            "localEmbarqueTotalReais":       inp_ler,
+            "conhecimentoCargaId":           inp_idc,
+            "conhecimentoCargaIdMaster":     inp_idm,
+        }
+
+        st.divider()
+
+        if st.session_state["merged_df"] is not None:
+            if st.button("⚙️ Gerar XML (Layout 8686)", type="primary",
+                         use_container_width=True):
+                try:
+                    p       = st.session_state["parsed_duimp"]
+                    records = st.session_state["merged_df"].to_dict("records")
+                    for i, item in enumerate(p.items):
+                        if i < len(records): item.update(records[i])
+                    builder   = XMLBuilder(p)
+                    xml_bytes = builder.build(user_inputs=user_xml)
+                    duimp_num = p.header.get("numeroDUIMP","0000").replace("/","-")
+                    st.download_button("⬇️ Baixar XML", data=xml_bytes,
+                                       file_name=f"DUIMP_{duimp_num}_INTEGRADO.xml",
+                                       mime="text/xml", use_container_width=True)
+                    st.success("✅ XML gerado com sucesso!")
+                    with st.expander("👁️ Preview XML"):
+                        st.code(xml_bytes.decode('utf-8', errors='ignore')[:3000], language='xml')
+                except Exception as e:
+                    st.error(f"Erro: {e}"); st.code(traceback.format_exc())
+        else:
+            empty_state("💾", "Nenhum dado disponível",
+                        "Realize o upload e a vinculação antes de gerar o XML")
+
+
+# ==============================================================================
+# APLICAÇÃO PRINCIPAL
+# ==============================================================================
+def main():
+    load_css()
+
+    ph("""
+    <div class="hero">
+        <img src="https://raw.githubusercontent.com/DaniloNs-creator/final/7ea6ab2a610ef8f0c11be3c34f046e7ff2cdfc6a/haefele_logo.png"
+             class="hero-logo" alt="Häfele">
+        <h1 class="hero-title">Sistema de Processamento Unificado 2026</h1>
+        <p class="hero-sub">TXT · MasterSAF Automação · DUIMP — Análise e geração de XML fiscal</p>
+        <div class="hero-chips">
+            <span class="chip">📄 TXT</span>
+            <span class="chip">⚡ MasterSAF</span>
+            <span class="chip">📊 DUIMP</span>
+            <span class="chip">🔵 Sigraweb</span>
+            <span class="chip">🟠 Extrato DUIMP</span>
+            <span class="chip">⚙️ XML 8686</span>
+        </div>
+    </div>""")
+
+    tab1, tab2, tab3 = st.tabs([
+        "📄  Processador TXT",
+        "⚡  MasterSAF Automação",
+        "📊  Sistema Integrado DUIMP",
+    ])
+    with tab1: processador_txt()
+    with tab2: mastersaf_automacao()
+    with tab3: sistema_integrado_duimp()
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except Exception as e:
+        st.error(f"Erro inesperado: {str(e)}")
+        st.code(traceback.format_exc())
