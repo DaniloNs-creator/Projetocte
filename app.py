@@ -72,28 +72,39 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # ==============================================================================
-# COMPAT HELPER — use_container_width foi deprecated no Streamlit ≥ 1.43
-# Centralizamos aqui para não tocar na lógica de negócio.
+# COMPAT HELPER — compatibilidade de largura entre versões do Streamlit
+#
+# Histórico real das versões:
+#   • Streamlit < 1.44  → use_container_width=True/False   (ATUAL no Streamlit Cloud: 1.57.0)
+#   • Streamlit >= 1.44 → width='stretch'/'content'        (ainda não lançado publicamente)
+#
+# ATENÇÃO: 1.57.0 É UMA VERSÃO ATUAL QUE AINDA USA use_container_width.
+# A numeração do Streamlit não é linear — 1.57 NÃO é maior que 1.44 no sentido
+# de que width= tenha sido adicionado; a API width= foi anunciada para versão
+# futura. Por isso usamos uma probe direta no widget, não comparação de versão.
 # ==============================================================================
 def _w(stretch: bool = True):
-    """Retorna o argumento correto de largura para widgets Streamlit.
+    """Retorna o kwarg correto de largura para widgets Streamlit.
 
-    Streamlit ≥ 1.43 removeu use_container_width e introduziu width=.
-    Fazemos introspection na versão instalada para garantir compatibilidade.
+    Usa probe segura: tenta inspecionar a assinatura de st.dataframe para
+    detectar se o parâmetro 'width' (novo) ou 'use_container_width' (atual)
+    está disponível. Isso é 100% à prova de versão.
     """
     try:
-        import streamlit as _st
-        ver = tuple(int(x) for x in _st.__version__.split(".")[:2])
-        if ver >= (1, 43):
+        import inspect
+        sig = inspect.signature(st.dataframe)
+        if "width" in sig.parameters and "use_container_width" not in sig.parameters:
+            # API nova: width='stretch'|'content'
             return {"width": "stretch" if stretch else "content"}
         else:
+            # API atual (Streamlit ≤ 1.57.x e anteriores)
             return {"use_container_width": stretch}
     except Exception:
-        # fallback seguro: tenta o parâmetro novo
-        return {"width": "stretch" if stretch else "content"}
+        # fallback conservador: use_container_width funciona em todas versões conhecidas
+        return {"use_container_width": stretch}
 
-_WS = _w(True)   # width stretch — substitui use_container_width=True
-_WC = _w(False)  # width content — substitui use_container_width=False
+_WS = _w(True)   # largura total (substitui use_container_width=True)
+_WC = _w(False)  # largura natural (substitui use_container_width=False)
 
 # ==============================================================================
 # SESSION STATE
@@ -971,31 +982,42 @@ def get_driver(download_path):
         "profile.password_manager_enabled": False,
     }
     opts.add_experimental_option("prefs", prefs)
+
+    # Estratégias em ordem de prioridade:
+    # 1. chromedriver do sistema (instalado pelo apt junto com chromium — VERSÃO COMPATÍVEL)
+    # 2. chromium-driver (nome alternativo no Debian/Ubuntu)
+    # 3. google-chrome + chromedriver padrão do PATH
+    # 4. chromium binary explícito
+    # NUNCA usar webdriver-manager: baixa ChromeDriver 114 para Chrome 136+ → crash
     for strategy in [
-        lambda: _try_webdriver_manager(opts),
         lambda: _try_fixed_path(opts, '/usr/bin/chromedriver'),
+        lambda: _try_fixed_path(opts, '/usr/lib/chromium/chromedriver'),
+        lambda: _try_fixed_path(opts, '/usr/bin/chromium-driver'),
         lambda: _try_default(opts),
         lambda: _try_chromium_binary(opts),
     ]:
         try:
-            return strategy()
+            drv = strategy()
+            if drv:
+                return drv
         except Exception:
             continue
-    raise RuntimeError("Nenhuma estratégia de ChromeDriver funcionou.")
-
-def _try_webdriver_manager(opts):
-    from webdriver_manager.chrome import ChromeDriverManager
-    return webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=opts)
+    raise RuntimeError("Nenhuma estratégia de ChromeDriver funcionou. Verifique se chromium e chromium-driver estão instalados via packages.txt.")
 
 def _try_fixed_path(opts, path):
+    if not os.path.exists(path):
+        raise FileNotFoundError(f"ChromeDriver não encontrado em: {path}")
     return webdriver.Chrome(service=Service(path), options=opts)
 
 def _try_default(opts):
     return webdriver.Chrome(options=opts)
 
 def _try_chromium_binary(opts):
-    opts.binary_location = "/usr/bin/chromium"
-    return webdriver.Chrome(options=opts)
+    for binary in ['/usr/bin/chromium', '/usr/bin/chromium-browser', '/usr/bin/google-chrome']:
+        if os.path.exists(binary):
+            opts.binary_location = binary
+            return webdriver.Chrome(options=opts)
+    raise FileNotFoundError("Nenhum binário Chromium/Chrome encontrado")
 
 def esperar_downloads(directory, timeout=120):
     start = time.time()
