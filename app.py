@@ -14,7 +14,7 @@ from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
-from webdriver_manager.chrome import ChromeDriverManager
+import subprocess
 
 st.set_page_config(
     page_title="MasterSAF — Automação XML",
@@ -22,6 +22,12 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="collapsed",
 )
+
+# ── INICIALIZAÇÃO DAS VARIÁVEIS DE SESSÃO ──
+if 'ms_logs' not in st.session_state:
+    st.session_state.ms_logs = []
+if 'download_path' not in st.session_state:
+    st.session_state.download_path = None
 
 st.markdown("""
 <style>
@@ -570,6 +576,14 @@ class CTeProcessor:
         }
 
 # ─────────────────────────────────────────────
+# FUNÇÃO AUXILIAR PARA LOG
+# ─────────────────────────────────────────────
+def add_log(msg):
+    """Adiciona mensagem ao log da sessão de forma segura"""
+    ts = datetime.now().strftime("%H:%M:%S")
+    st.session_state.ms_logs.append(f"[{ts}]  {msg}")
+
+# ─────────────────────────────────────────────
 # NAV BAR
 # ─────────────────────────────────────────────
 st.markdown("""
@@ -636,9 +650,44 @@ with col_b:
 st.markdown('</div>', unsafe_allow_html=True)  # fecha .main-grid
 
 # ─────────────────────────────────────────────
-# DRIVER
+# FUNÇÃO PARA OBTER O DRIVER CORRETO
 # ─────────────────────────────────────────────
+def get_chrome_version():
+    """Detecta a versão do Chrome/Chromium instalada"""
+    try:
+        # Tenta detectar versão do chromium
+        result = subprocess.run(['chromium', '--version'], capture_output=True, text=True)
+        if result.returncode == 0:
+            version = result.stdout.strip()
+            add_log(f"🔍 Chromium detectado: {version}")
+            return version
+    except:
+        pass
+    
+    try:
+        # Tenta detectar versão do google-chrome
+        result = subprocess.run(['google-chrome', '--version'], capture_output=True, text=True)
+        if result.returncode == 0:
+            version = result.stdout.strip()
+            add_log(f"🔍 Chrome detectado: {version}")
+            return version
+    except:
+        pass
+    
+    try:
+        # Tenta detectar versão do google-chrome-stable
+        result = subprocess.run(['google-chrome-stable', '--version'], capture_output=True, text=True)
+        if result.returncode == 0:
+            version = result.stdout.strip()
+            add_log(f"🔍 Chrome Stable detectado: {version}")
+            return version
+    except:
+        pass
+    
+    return None
+
 def get_driver(download_path):
+    """Cria e retorna uma instância do WebDriver configurada corretamente"""
     opts = Options()
     opts.add_argument("--headless=new")
     opts.add_argument("--window-size=1920,1080")
@@ -650,22 +699,61 @@ def get_driver(download_path):
     opts.add_argument("--disable-infobars")
     opts.add_argument("--disable-notifications")
     opts.add_argument("--disable-popup-blocking")
+    opts.add_argument("--disable-blink-features=AutomationControlled")
+    opts.add_experimental_option("excludeSwitches", ["enable-automation"])
+    opts.add_experimental_option('useAutomationExtension', False)
+    
     prefs = {
         "download.default_directory": download_path,
         "download.prompt_for_download": False,
         "download.directory_upgrade": True,
         "safebrowsing.enabled": True,
         "profile.default_content_setting_values.automatic_downloads": 1,
+        "credentials_enable_service": False,
+        "profile.password_manager_enabled": False
     }
     opts.add_experimental_option("prefs", prefs)
-    opts.add_experimental_option("excludeSwitches", ["enable-logging"])
-    # Descomente se necessário no Windows:
-    # opts.binary_location = r"C:\Program Files\Google\Chrome\Application\chrome.exe"
-    return webdriver.Chrome(
-        service=Service(ChromeDriverManager().install()), options=opts)
-
+    
+    # Tenta criar o driver com diferentes opções
+    try:
+        # Primeira tentativa: usar o ChromeDriverManager que deve baixar a versão correta
+        from webdriver_manager.chrome import ChromeDriverManager
+        from selenium.webdriver.chrome.service import Service
+        
+        service = Service(ChromeDriverManager().install())
+        driver = webdriver.Chrome(service=service, options=opts)
+        add_log("✅ Driver criado com sucesso usando ChromeDriverManager")
+        return driver
+    except Exception as e:
+        add_log(f"⚠️ Falha com ChromeDriverManager: {str(e)[:100]}")
+        
+        try:
+            # Segunda tentativa: usar o chromedriver do sistema
+            service = Service('/usr/bin/chromedriver')
+            driver = webdriver.Chrome(service=service, options=opts)
+            add_log("✅ Driver criado com sucesso usando chromedriver do sistema")
+            return driver
+        except Exception as e:
+            add_log(f"⚠️ Falha com chromedriver do sistema: {str(e)[:100]}")
+            
+            try:
+                # Terceira tentativa: não especificar o serviço (deixar o Selenium encontrar)
+                driver = webdriver.Chrome(options=opts)
+                add_log("✅ Driver criado com sucesso sem especificar serviço")
+                return driver
+            except Exception as e:
+                # Última tentativa: verificar se o chromium está instalado e tentar com ele
+                add_log(f"⚠️ Tentando com chromium diretamente...")
+                opts.binary_location = "/usr/bin/chromium"
+                try:
+                    driver = webdriver.Chrome(options=opts)
+                    add_log("✅ Driver criado com sucesso usando chromium")
+                    return driver
+                except Exception as e2:
+                    raise Exception(f"Não foi possível criar o driver. Verifique a instalação do Chrome/Chromium. Erros: {str(e)[:100]} | {str(e2)[:100]}")
 
 def esperar_downloads(directory, timeout=120):
+    """Aguarda até que todos os downloads sejam concluídos"""
     start = time.time()
     while time.time() - start < timeout:
         if not list(Path(directory).glob('*.crdownload')):
@@ -680,7 +768,11 @@ if iniciar:
     if not usuario or not senha:
         st.error("⚠️ Preencha o usuário e a senha para continuar.")
     else:
+        # Limpa logs anteriores
+        st.session_state.ms_logs = []
+        
         dl_path = tempfile.mkdtemp(prefix="mastersaf_web_")
+        st.session_state.download_path = dl_path
 
         st.markdown('<div class="divider"><hr></div>', unsafe_allow_html=True)
         st.markdown("""
@@ -693,39 +785,48 @@ if iniciar:
             status_box   = st.info("⏳ Inicializando ambiente e navegador...")
             progress_bar = st.progress(0)
             log_area     = st.empty()
-
-        log_lines = []
-
-        def log(msg):
-            ts = datetime.now().strftime("%H:%M:%S")
-            log_lines.append(f"[{ts}]  {msg}")
-            log_area.code("\n".join(log_lines[-35:]), language=None)
+        
+        # Função para atualizar o log na tela
+        def update_log():
+            log_area.code("\n".join(st.session_state.ms_logs[-35:]), language=None)
 
         driver = None
         try:
-            log("🌐 Iniciando Chrome em modo headless...")
+            # Verifica a versão do Chrome
+            chrome_version = get_chrome_version()
+            if chrome_version:
+                add_log(f"📊 Versão do navegador: {chrome_version}")
+            
+            add_log("🌐 Iniciando Chrome em modo headless...")
             driver = get_driver(dl_path)
+            update_log()
 
             status_box.info("🔑 Autenticando no MasterSAF...")
-            log("🔗 Acessando https://p.dfe.mastersaf.com.br/mvc/login")
+            add_log("🔗 Acessando https://p.dfe.mastersaf.com.br/mvc/login")
             driver.get("https://p.dfe.mastersaf.com.br/mvc/login")
             time.sleep(3)
+            
+            # Login
             driver.find_element(By.XPATH, '//*[@id="nomeusuario"]').send_keys(usuario)
             driver.find_element(By.XPATH, '//*[@id="senha"]').send_keys(senha)
             driver.execute_script("arguments[0].click();",
                 driver.find_element(By.XPATH, '//*[@id="enter"]'))
             time.sleep(5)
-            log("✅ Login realizado com sucesso")
+            add_log("✅ Login realizado com sucesso")
             progress_bar.progress(0.05)
+            update_log()
 
+            # Navegação
             status_box.info("📋 Navegando até Listagem de CT-es...")
             driver.execute_script("arguments[0].click();",
                 driver.find_element(By.XPATH, '//*[@id="linkListagemReceptorCTEs"]/a'))
             time.sleep(5)
-            log("📋 Módulo Listagem Receptor CT-es acessado")
+            add_log("📋 Módulo Listagem Receptor CT-es acessado")
             progress_bar.progress(0.08)
+            update_log()
 
-            log(f"📅 Definindo período: {data_ini} → {data_fin}")
+            # Configurar período
+            add_log(f"📅 Definindo período: {data_ini} → {data_fin}")
             for xpath, val in [
                 ('//*[@id="consultaDataInicial"]', data_ini),
                 ('//*[@id="consultaDataFinal"]',   data_fin),
@@ -737,13 +838,16 @@ if iniciar:
                 el.send_keys(val)
             time.sleep(1)
 
+            # Atualizar listagem
             status_box.info("🔄 Atualizando listagem...")
             driver.execute_script("arguments[0].click();",
                 driver.find_element(By.XPATH, '//*[@id="listagem_atualiza"]'))
             time.sleep(5)
             progress_bar.progress(0.12)
+            update_log()
 
-            log("⚙️ Configurando 200 itens por página...")
+            # Configurar 200 itens por página
+            add_log("⚙️ Configurando 200 itens por página...")
             sel = driver.find_element(
                 By.XPATH, '//*[@id="plistagem_center"]/table/tbody/tr/td[8]/select')
             sel.click()
@@ -751,11 +855,16 @@ if iniciar:
             sel.find_element(By.XPATH, './/option[@value="200"]').click()
             time.sleep(3)
             progress_bar.progress(0.15)
+            update_log()
 
-            log(f"📥 Loop de download iniciado — {int(qtd_loops)} página(s)")
+            # Loop de download
+            add_log(f"📥 Loop de download iniciado — {int(qtd_loops)} página(s)")
+            update_log()
 
             for i in range(int(qtd_loops)):
-                log(f"━━ Página {i + 1} / {int(qtd_loops)}")
+                add_log(f"━━ Página {i + 1} / {int(qtd_loops)}")
+                update_log()
+                
                 try:
                     cb = driver.find_element(
                         By.XPATH, '//*[@id="jqgh_listagem_checkBox"]/div/input')
@@ -763,7 +872,7 @@ if iniciar:
                         cb.click()
                     time.sleep(2)
                 except Exception:
-                    log("   ⚠  Não foi possível marcar checkboxes")
+                    add_log("   ⚠  Não foi possível marcar checkboxes")
 
                 try:
                     driver.execute_script("arguments[0].click();",
@@ -772,9 +881,10 @@ if iniciar:
                     driver.execute_script("arguments[0].click();",
                         driver.find_element(By.XPATH, '//*[@id="downloadEmMassaXml"]'))
                 except Exception:
-                    log("   ⚠  Botão de download em massa não encontrado")
+                    add_log("   ⚠  Botão de download em massa não encontrado")
 
-                log("   ⏳ Aguardando download finalizar...")
+                add_log("   ⏳ Aguardando download finalizar...")
+                update_log()
                 esperar_downloads(dl_path, timeout=120)
                 time.sleep(2)
 
@@ -793,7 +903,7 @@ if iniciar:
                             By.XPATH, '//*[@id="next_plistagem"]/span').click()
                         time.sleep(5)
                     except Exception:
-                        log("   ⚠  Fim das páginas disponíveis")
+                        add_log("   ⚠  Fim das páginas disponíveis")
                         break
 
                 pct = 0.15 + ((i + 1) / int(qtd_loops)) * 0.60
@@ -801,25 +911,29 @@ if iniciar:
                 status_box.info(
                     f"⏳ Baixando XMLs — {i + 1} de {int(qtd_loops)} páginas concluídas...")
 
-            log("✅ Todos os downloads concluídos")
+            add_log("✅ Todos os downloads concluídos")
             driver.quit()
             driver = None
             progress_bar.progress(0.78)
+            update_log()
 
             # ── Processamento ──────────────────────────
             processor = CTeProcessor()
             zip_found = list(Path(dl_path).glob('*.zip'))
-            log(f"🔍 {len(zip_found)} arquivo(s) ZIP localizado(s)")
+            add_log(f"🔍 {len(zip_found)} arquivo(s) ZIP localizado(s)")
+            update_log()
 
             if gerar_excel and zip_found:
                 status_box.info("📊 Processando XMLs e montando Excel...")
-                processor.process_directory(dl_path, log)
-                log(f"📊 CT-es identificados: {len(processor.processed_data)}")
+                processor.process_directory(dl_path, add_log)
+                add_log(f"📊 CT-es identificados: {len(processor.processed_data)}")
             progress_bar.progress(0.92)
+            update_log()
 
             zip_buf = None
             if gerar_zip:
-                log("📦 Empacotando XMLs brutos...")
+                add_log("📦 Empacotando XMLs brutos...")
+                update_log()
                 buf_io = io.BytesIO()
                 with zipfile.ZipFile(buf_io, 'w', zipfile.ZIP_DEFLATED) as zipf:
                     for root_dir, _, files in os.walk(dl_path):
@@ -830,7 +944,8 @@ if iniciar:
 
             progress_bar.progress(1.0)
             status_box.success("✅ Automação concluída com sucesso!")
-            log("🏁 Pipeline completo.")
+            add_log("🏁 Pipeline completo.")
+            update_log()
 
             shutil.rmtree(dl_path, ignore_errors=True)
 
@@ -864,40 +979,43 @@ if iniciar:
                 """, unsafe_allow_html=True)
 
             # ── Downloads ──────────────────────────────
-            st.markdown('<div class="divider"><hr></div>', unsafe_allow_html=True)
-            dl1, dl2 = st.columns(2, gap="large")
+            if gerar_excel or (gerar_zip and zip_buf):
+                st.markdown('<div class="divider"><hr></div>', unsafe_allow_html=True)
+                dl1, dl2 = st.columns(2, gap="large")
 
-            if gerar_excel:
-                if processor.processed_data:
-                    excel_bytes, n_reg = processor.export_to_excel_bytes()
-                    if excel_bytes:
-                        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+                if gerar_excel:
+                    if processor.processed_data:
+                        excel_bytes, n_reg = processor.export_to_excel_bytes()
+                        if excel_bytes:
+                            ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+                            with dl1:
+                                st.download_button(
+                                    label=f"📊  Download Excel — {n_reg} CT-es",
+                                    data=excel_bytes,
+                                    file_name=f"CTe_Processados_{ts}.xlsx",
+                                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                                )
+                    else:
                         with dl1:
-                            st.download_button(
-                                label=f"📊  Download Excel — {n_reg} CT-es",
-                                data=excel_bytes,
-                                file_name=f"CTe_Processados_{ts}.xlsx",
-                                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                            )
-                else:
-                    with dl1:
-                        st.warning("Nenhum CT-e extraído dos ZIPs.")
+                            st.warning("Nenhum CT-e extraído dos ZIPs.")
 
-            if gerar_zip and zip_buf:
-                with dl2:
-                    st.download_button(
-                        label="📥  Download ZIP — XMLs brutos",
-                        data=zip_buf,
-                        file_name="XMLs_MasterSaf.zip",
-                        mime="application/zip",
-                    )
+                if gerar_zip and zip_buf:
+                    with dl2:
+                        st.download_button(
+                            label="📥  Download ZIP — XMLs brutos",
+                            data=zip_buf,
+                            file_name="XMLs_MasterSaf.zip",
+                            mime="application/zip",
+                        )
 
         except Exception as e:
-            st.error(f"❌ Erro técnico: {e}")
-            log(f"❌ EXCEÇÃO: {e}")
+            st.error(f"❌ Erro técnico: {str(e)[:200]}")
+            add_log(f"❌ EXCEÇÃO: {str(e)[:200]}")
+            update_log()
             if driver:
                 try:
                     driver.quit()
                 except Exception:
                     pass
-            shutil.rmtree(dl_path, ignore_errors=True)
+            if dl_path and os.path.exists(dl_path):
+                shutil.rmtree(dl_path, ignore_errors=True)
