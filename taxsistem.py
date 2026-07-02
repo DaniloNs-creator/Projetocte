@@ -2,7 +2,7 @@
 """
 ==================================================================================
 HÄFELE TAX SYSTEM — Sistema Integrado de Processamento Fiscal
-Versão: 5.0.1 - COMPLETA com todas as funcionalidades (bugfix buscar_regra)
+Versão: 6.0 - COMPLETA com correção do erro startswith
 ==================================================================================
 
 Sistema unificado que integra com TODAS as funcionalidades originais:
@@ -1272,40 +1272,65 @@ def regras_padrao() -> pd.DataFrame:
     return df
 
 
-# ---- FUNÇÃO CORRIGIDA (bug fix aplicado) ----
+# ==============================================================================
+# FUNÇÃO CORRIGIDA - buscar_regra
+# ==============================================================================
+
 def buscar_regra(regras: pd.DataFrame, cst: str, cfop: str, tributo: str) -> Optional[dict]:
     """
-    Busca a regra tributária aplicável para um dado CST + CFOP + tributo.
-
-    CORREÇÃO (bugfix): a versão anterior chamava
-        cfop.startswith(regras["cfop_prefixo"].astype(str))
-    o que é inválido, pois str.startswith() só aceita str ou tuple de str,
-    nunca uma Series do pandas — isso gerava:
-        TypeError: startswith first arg must be str or a tuple of str, not Series
-
-    Agora o teste é feito de forma vetorizada com `.apply()`, comparando
-    corretamente cada prefixo de CFOP da tabela de regras contra o CFOP informado.
+    Busca uma regra tributária com base no CST, CFOP e tributo.
+    
+    Args:
+        regras: DataFrame com as regras configuradas
+        cst: Código de Situação Tributária
+        cfop: Código Fiscal de Operações e Prestações
+        tributo: Tipo de tributo (ICMS, IPI, PIS, COFINS)
+    
+    Returns:
+        Dicionário com a regra encontrada ou None
     """
     if regras is None or regras.empty:
         return None
+    
     cst = (cst or "").strip()
     cfop = (cfop or "").strip()
-
-    if cfop:
-        match_cfop = regras["cfop_prefixo"].astype(str).apply(lambda pref: cfop.startswith(pref))
-    else:
-        match_cfop = pd.Series(True, index=regras.index)
-
-    candidatos = regras[
-        (regras["tributo"] == tributo)
-        & (regras["ativo"])
-        & (regras["cst"].astype(str).str.strip() == cst)
-        & match_cfop
-    ]
-    if candidatos.empty:
+    
+    try:
+        # Converte CST para string para comparação
+        regras_str = regras.copy()
+        regras_str["cst"] = regras_str["cst"].astype(str).str.strip()
+        
+        # Filtra por tributo, CST e ativo
+        candidatos = regras_str[
+            (regras_str["tributo"] == tributo) &
+            (regras_str["ativo"]) &
+            (regras_str["cst"] == cst)
+        ]
+        
+        if candidatos.empty:
+            return None
+        
+        # Se não tem CFOP, retorna a primeira regra
+        if not cfop:
+            return candidatos.iloc[0].to_dict()
+        
+        # Busca por prefixo de CFOP
+        for idx, row in candidatos.iterrows():
+            prefixo = str(row.get("cfop_prefixo", ""))
+            if prefixo and cfop.startswith(prefixo):
+                return row.to_dict()
+        
+        # Se nenhuma regra específica for encontrada, retorna a primeira
+        return candidatos.iloc[0].to_dict()
+        
+    except Exception as e:
+        logging.warning(f"Erro ao buscar regra: {e}")
         return None
-    return candidatos.iloc[0].to_dict()
 
+
+# ==============================================================================
+# CONTINUAÇÃO DAS FUNÇÕES SPED
+# ==============================================================================
 
 def calcular_imposto(base: Decimal, aliquota_pct: Decimal) -> Decimal:
     return (base * aliquota_pct / Decimal("100"))
