@@ -2,7 +2,7 @@
 """
 ==================================================================================
 HÄFELE TAX SYSTEM — Sistema Integrado de Processamento Fiscal
-Versão: 3.1 - Correção de erro ph() e integração completa
+Versão: 3.2 - Correção de erro ph() e integração completa
 ==================================================================================
 
 Sistema unificado que integra:
@@ -52,7 +52,7 @@ from lxml import etree
 import xml.etree.ElementTree as ET
 
 try:
-    import openpyxl  # noqa: F401
+    import openpyxl
 except ImportError:
     pass
 
@@ -93,7 +93,7 @@ except Exception:
 APP_TITLE = "HÄFELE TAX SYSTEM"
 APP_ICON = "🏛️"
 
-# Cores da Häfele
+# Cores da Häfele - DARK MODE
 CORES = {
     "primaria": "#0B3D2E",
     "secundaria": "#134E36",
@@ -101,12 +101,18 @@ CORES = {
     "gradiente_2": "#1E7A4C",
     "gradiente_3": "#C9A24B",
     "destaque": "#C9A24B",
-    "fundo_card": "#F4F6F5",
-    "erro": "#B3261E",
-    "alerta": "#B7791F",
-    "ok": "#1E7A4C",
-    "texto_claro": "#F4F6F5",
+    "fundo": "#0A0E17",
+    "fundo_card": "#141B2D",
+    "fundo_card_hover": "#1A2340",
+    "erro": "#EF4444",
+    "alerta": "#F59E0B",
+    "ok": "#10B981",
+    "texto_primario": "#E2E8F0",
+    "texto_secundario": "#94A3B8",
+    "texto_claro": "#F8FAFC",
     "texto_escuro": "#12241C",
+    "borda": "#1E293B",
+    "borda_hover": "#334155",
 }
 
 # Tipos de arquivo SPED
@@ -131,7 +137,6 @@ CTE_NAMESPACES = {'cte': 'http://www.portalfiscal.inf.br/cte'}
 # ==============================================================================
 
 def _w(stretch: bool = True):
-    """Compatibilidade entre versões do Streamlit"""
     try:
         import inspect
         sig = inspect.signature(st.dataframe)
@@ -150,7 +155,6 @@ _WC = _w(False)
 # ==============================================================================
 
 _defaults = {
-    # SPED
     'registros': [],
     'registros_map': {},
     'registros_originais_map': {},
@@ -160,8 +164,6 @@ _defaults = {
     'regras_tributarias': None,
     'audit_log': [],
     'arquivo_carregado': False,
-    
-    # DUIMP
     'selected_xml': None,
     'cte_data': None,
     'parsed_duimp': None,
@@ -169,14 +171,10 @@ _defaults = {
     'merged_df': None,
     'last_duimp': None,
     'layout_app2': 'sigraweb',
-    
-    # MasterSAF
     'ms_logs': [],
     'ms_download_path': None,
     'ms_processed_data': [],
     'ms_zip_bytes': None,
-    
-    # Geral
     'usuario_atual': 'analista.fiscal',
     'modulo_atual': 'home',
 }
@@ -190,7 +188,7 @@ for k, v in _defaults.items():
 # ==============================================================================
 
 def ph(html: str):
-    """Renderiza HTML com unsafe_allow_html=True por padrão"""
+    """Renderiza HTML com unsafe_allow_html=True"""
     st.markdown(html, unsafe_allow_html=True)
 
 def section_title(text: str):
@@ -237,8 +235,14 @@ def badge_html(texto: str, severidade: str) -> str:
     cls = classes.get(severidade, "badge-ok")
     return f'<span class="{cls}">{texto}</span>'
 
+def botao_voltar():
+    """Botão para voltar à tela inicial"""
+    if st.button("🏠 Voltar ao Início", key="btn_voltar"):
+        st.query_params.clear()
+        st.rerun()
+
 # ==============================================================================
-# CSS GLOBAL
+# CSS GLOBAL - DARK MODE
 # ==============================================================================
 
 def load_css():
@@ -246,327 +250,582 @@ def load_css():
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600&display=swap');
 
     :root{
-        --navy:#0A0F1E;
-        --blue-dark:#0F2040;
-        --blue:#1E3A8A;
-        --blue-m:#2563EB;
-        --blue-l:#3B82F6;
-        --blue-xl:#60A5FA;
-        --blue-bg:#EFF6FF;
-        --blue-b:#BFDBFE;
-        --green:#059669;
-        --green-l:#10B981;
-        --green-bg:#D1FAE5;
-        --amber:#D97706;
-        --amber-bg:#FEF3C7;
-        --red:#DC2626;
-        --red-bg:#FEE2E2;
-        --bg:#F0F4FA;
-        --surface:#FFFFFF;
-        --surface2:#F8FAFC;
-        --border:#E2E8F0;
-        --border-strong:#CBD5E1;
-        --muted:#64748B;
-        --muted2:#94A3B8;
-        --text:#0F172A;
+        --bg-primary: #0A0E17;
+        --bg-secondary: #141B2D;
+        --bg-card: #141B2D;
+        --bg-card-hover: #1A2340;
+        --text-primary: #E2E8F0;
+        --text-secondary: #94A3B8;
+        --text-muted: #64748B;
+        --border-color: #1E293B;
+        --border-hover: #334155;
+        --blue: #3B82F6;
+        --blue-dark: #1E3A8A;
+        --blue-light: #60A5FA;
+        --green: #10B981;
+        --green-dark: #059669;
+        --amber: #F59E0B;
+        --red: #EF4444;
         --r:10px;
         --r-lg:16px;
         --r-xl:24px;
         --r-2xl:32px;
-        --sh0:0 1px 3px rgba(0,0,0,.06);
-        --sh1:0 2px 8px rgba(0,0,0,.08),0 1px 3px rgba(0,0,0,.05);
-        --sh2:0 8px 24px rgba(0,0,0,.10),0 2px 8px rgba(0,0,0,.06);
-        --sh3:0 20px 60px rgba(0,0,0,.14),0 4px 16px rgba(0,0,0,.08);
-        --sh-blue:0 8px 32px rgba(37,99,235,.20);
+        --sh0:0 1px 3px rgba(0,0,0,.4);
+        --sh1:0 2px 8px rgba(0,0,0,.5),0 1px 3px rgba(0,0,0,.3);
+        --sh2:0 8px 24px rgba(0,0,0,.6),0 2px 8px rgba(0,0,0,.4);
+        --sh3:0 20px 60px rgba(0,0,0,.7),0 4px 16px rgba(0,0,0,.5);
         --tr:all .2s cubic-bezier(.4,0,.2,1);
-        --glow:0 0 0 3px rgba(59,130,246,.25);
     }
 
-    html,body,[class*="css"]{
-        font-family:'Inter','Segoe UI',system-ui,sans-serif;
-        -webkit-font-smoothing:antialiased;
-        color:var(--text);
+    /* Reset e base */
+    html, body, [class*="css"] {
+        font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+        background-color: var(--bg-primary) !important;
+        color: var(--text-primary) !important;
     }
-    ::-webkit-scrollbar{width:6px;height:6px}
-    ::-webkit-scrollbar-track{background:var(--bg);border-radius:10px}
-    ::-webkit-scrollbar-thumb{background:var(--border-strong);border-radius:10px}
-    ::-webkit-scrollbar-thumb:hover{background:var(--muted2)}
-    .block-container{padding-top:1rem!important;padding-bottom:2rem!important;max-width:1400px!important;}
+
+    /* Scrollbar */
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: var(--bg-secondary); border-radius: 10px; }
+    ::-webkit-scrollbar-thumb { background: var(--border-hover); border-radius: 10px; }
+    ::-webkit-scrollbar-thumb:hover { background: var(--text-muted); }
+
+    .block-container {
+        padding-top: 1rem !important;
+        padding-bottom: 2rem !important;
+        max-width: 1400px !important;
+    }
 
     /* Hero - Tela inicial */
-    .hero-home{
-        display:flex;
-        flex-direction:column;
-        align-items:center;
-        justify-content:center;
-        min-height:70vh;
-        text-align:center;
-        padding:2rem;
-        background:linear-gradient(135deg,#050D1F 0%,#0F2040 35%,#1E3A8A 65%,#1D4ED8 100%);
-        border-radius:var(--r-2xl);
-        margin-bottom:2rem;
-        position:relative;
-        overflow:hidden;
+    .hero-home {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        min-height: 70vh;
+        text-align: center;
+        padding: 2rem;
+        background: linear-gradient(135deg, #050D1F 0%, #0A1628 40%, #0F2040 70%, #1A2D5A 100%);
+        border-radius: var(--r-2xl);
+        margin-bottom: 2rem;
+        position: relative;
+        overflow: hidden;
+        border: 1px solid rgba(59, 130, 246, 0.1);
     }
-    .hero-home::before{
-        content:'';position:absolute;inset:0;
+    .hero-home::before {
+        content: '';
+        position: absolute;
+        inset: 0;
         background-image:
-            linear-gradient(rgba(255,255,255,.03) 1px,transparent 1px),
-            linear-gradient(90deg,rgba(255,255,255,.03) 1px,transparent 1px);
-        background-size:48px 48px;pointer-events:none;
+            linear-gradient(rgba(59,130,246,.05) 1px, transparent 1px),
+            linear-gradient(90deg, rgba(59,130,246,.05) 1px, transparent 1px);
+        background-size: 48px 48px;
+        pointer-events: none;
     }
-    .hero-home .logo{
-        max-width:280px;
-        margin-bottom:2rem;
-        filter:drop-shadow(0 8px 32px rgba(0,0,0,.5));
-        position:relative;z-index:1;
-        transition:var(--tr);
+    .hero-home .logo {
+        max-width: 280px;
+        margin-bottom: 2rem;
+        filter: drop-shadow(0 8px 32px rgba(0,0,0,.6));
+        position: relative;
+        z-index: 1;
+        transition: var(--tr);
     }
-    .hero-home .logo:hover{transform:scale(1.03);}
-    .hero-home h1{
-        font-size:3.5rem;
-        font-weight:900;
-        color:#fff;
-        margin:0 0 .5rem;
-        letter-spacing:-1px;
-        position:relative;z-index:1;
-        text-shadow:0 4px 20px rgba(0,0,0,.3);
+    .hero-home .logo:hover { transform: scale(1.03); }
+    .hero-home h1 {
+        font-size: 3.5rem;
+        font-weight: 900;
+        color: #fff;
+        margin: 0 0 .5rem;
+        letter-spacing: -1px;
+        position: relative;
+        z-index: 1;
+        text-shadow: 0 4px 20px rgba(0,0,0,.3);
     }
-    .hero-home .sub{
-        font-size:1.1rem;
-        color:rgba(255,255,255,.7);
-        margin-bottom:2.5rem;
-        position:relative;z-index:1;
-        max-width:600px;
+    .hero-home .sub {
+        font-size: 1.1rem;
+        color: rgba(255,255,255,.6);
+        margin-bottom: 2.5rem;
+        position: relative;
+        z-index: 1;
+        max-width: 600px;
     }
-    .hero-home .sub strong{color:rgba(255,255,255,.95);}
+    .hero-home .sub strong { color: rgba(255,255,255,.9); }
 
-    .home-grid{
-        display:grid;
-        grid-template-columns:repeat(auto-fit,minmax(220px,1fr));
-        gap:1.5rem;
-        width:100%;
-        max-width:900px;
-        position:relative;z-index:1;
+    .home-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+        gap: 1.5rem;
+        width: 100%;
+        max-width: 900px;
+        position: relative;
+        z-index: 1;
     }
-    .home-card{
-        background:rgba(255,255,255,.08);
-        backdrop-filter:blur(12px);
-        border:1px solid rgba(255,255,255,.12);
-        border-radius:var(--r-lg);
-        padding:1.8rem 1.5rem;
-        text-align:center;
-        cursor:pointer;
-        transition:var(--tr);
-        color:#fff;
-        text-decoration:none;
-        display:block;
+    .home-card {
+        background: rgba(255,255,255,.06);
+        backdrop-filter: blur(12px);
+        border: 1px solid rgba(255,255,255,.08);
+        border-radius: var(--r-lg);
+        padding: 1.8rem 1.5rem;
+        text-align: center;
+        cursor: pointer;
+        transition: var(--tr);
+        color: #fff;
+        text-decoration: none;
+        display: block;
     }
-    .home-card:hover{
-        background:rgba(255,255,255,.16);
-        transform:translateY(-6px);
-        box-shadow:0 12px 40px rgba(0,0,0,.25);
-        border-color:rgba(255,255,255,.25);
+    .home-card:hover {
+        background: rgba(255,255,255,.12);
+        transform: translateY(-6px);
+        box-shadow: 0 12px 40px rgba(0,0,0,.4);
+        border-color: rgba(59,130,246,.3);
     }
-    .home-card .icon{font-size:2.8rem;margin-bottom:.8rem;display:block;}
-    .home-card .name{font-weight:700;font-size:1.1rem;margin-bottom:.3rem;}
-    .home-card .desc{font-size:.78rem;color:rgba(255,255,255,.6);line-height:1.4;}
+    .home-card .icon { font-size: 2.8rem; margin-bottom: .8rem; display: block; }
+    .home-card .name { font-weight: 700; font-size: 1.1rem; margin-bottom: .3rem; }
+    .home-card .desc { font-size: .78rem; color: rgba(255,255,255,.5); line-height: 1.4; }
 
     /* Cabeçalho de página */
-    .ph-hdr{
-        display:flex;align-items:center;gap:1rem;
-        background:var(--surface);
-        border:1px solid var(--border);
-        border-left:4px solid var(--blue-l);
-        border-radius:var(--r);padding:.9rem 1.4rem;
-        margin-bottom:1.2rem;box-shadow:var(--sh0);
-        transition:var(--tr);
+    .ph-hdr {
+        display: flex;
+        align-items: center;
+        gap: 1rem;
+        background: var(--bg-card);
+        border: 1px solid var(--border-color);
+        border-left: 4px solid var(--blue);
+        border-radius: var(--r);
+        padding: .9rem 1.4rem;
+        margin-bottom: 1.2rem;
+        box-shadow: var(--sh0);
+        transition: var(--tr);
     }
-    .ph-hdr:hover{box-shadow:var(--sh1);border-left-color:var(--blue-m);}
-    .ph-icon{font-size:2rem;flex-shrink:0;line-height:1;}
-    .ph-title{font-size:1.3rem;font-weight:800;color:var(--blue);line-height:1.2;}
-    .ph-sub{font-size:.8rem;color:var(--muted);margin-top:.15rem;}
+    .ph-hdr:hover {
+        box-shadow: var(--sh1);
+        border-left-color: var(--blue-light);
+        border-color: var(--border-hover);
+    }
+    .ph-icon { font-size: 2rem; flex-shrink: 0; line-height: 1; }
+    .ph-title { font-size: 1.3rem; font-weight: 800; color: var(--blue-light); line-height: 1.2; }
+    .ph-sub { font-size: .8rem; color: var(--text-secondary); margin-top: .15rem; }
 
     /* Seção */
-    .stitle{
-        display:flex;align-items:center;
-        font-size:.88rem;font-weight:700;
-        color:var(--blue);
-        padding:.5rem 0 .5rem .85rem;
-        border-left:3px solid var(--blue-l);
-        margin:1.1rem 0 .7rem;
-        background:linear-gradient(90deg,rgba(59,130,246,.07),transparent 80%);
-        border-radius:0 var(--r) var(--r) 0;
-        letter-spacing:.2px;
+    .stitle {
+        display: flex;
+        align-items: center;
+        font-size: .88rem;
+        font-weight: 700;
+        color: var(--blue-light);
+        padding: .5rem 0 .5rem .85rem;
+        border-left: 3px solid var(--blue);
+        margin: 1.1rem 0 .7rem;
+        background: linear-gradient(90deg, rgba(59,130,246,.08), transparent 80%);
+        border-radius: 0 var(--r) var(--r) 0;
+        letter-spacing: .2px;
     }
 
     /* Cards */
-    .card{
-        background:var(--surface);
-        border-radius:var(--r-lg);
-        border:1px solid var(--border);
-        box-shadow:var(--sh1);
-        padding:1.3rem 1.5rem;
-        margin-bottom:1rem;
-        transition:var(--tr);
+    .card {
+        background: var(--bg-card);
+        border-radius: var(--r-lg);
+        border: 1px solid var(--border-color);
+        box-shadow: var(--sh1);
+        padding: 1.3rem 1.5rem;
+        margin-bottom: 1rem;
+        transition: var(--tr);
     }
-    .card:hover{box-shadow:var(--sh2);border-color:var(--blue-b);}
-    .card-accent{border-top:3px solid var(--blue-l);}
+    .card:hover {
+        box-shadow: var(--sh2);
+        border-color: var(--border-hover);
+    }
+    .card-accent { border-top: 3px solid var(--blue); }
 
     /* Badges */
-    .badge-critica{
-        background:var(--red);color:white;padding:3px 10px;
-        border-radius:12px;font-size:.74em;font-weight:600;
-        display:inline-block;animation:pulse 2.2s infinite;
+    .badge-critica {
+        background: var(--red);
+        color: white;
+        padding: 3px 10px;
+        border-radius: 12px;
+        font-size: .74em;
+        font-weight: 600;
+        display: inline-block;
+        animation: pulse 2.2s infinite;
     }
-    .badge-atencao{
-        background:var(--amber);color:white;padding:3px 10px;
-        border-radius:12px;font-size:.74em;font-weight:600;display:inline-block;
+    .badge-atencao {
+        background: var(--amber);
+        color: white;
+        padding: 3px 10px;
+        border-radius: 12px;
+        font-size: .74em;
+        font-weight: 600;
+        display: inline-block;
     }
-    .badge-ok{
-        background:var(--green);color:white;padding:3px 10px;
-        border-radius:12px;font-size:.74em;font-weight:600;display:inline-block;
-    }
-
-    @keyframes pulse{
-        0%{box-shadow:0 0 0 0 rgba(179,38,30,0.45);}
-        70%{box-shadow:0 0 0 10px rgba(179,38,30,0);}
-        100%{box-shadow:0 0 0 0 rgba(179,38,30,0);}
-    }
-
-    .sbox{
-        padding:.7rem 1.1rem;border-radius:var(--r);
-        font-size:.88rem;font-weight:500;margin:.4rem 0;
-        display:flex;align-items:center;gap:.5rem;
-    }
-    .sbox-ok{
-        background:var(--green-bg);color:#065F46;
-        border:1px solid #A7F3D0;border-left:3px solid var(--green);
-    }
-    .sbox-warn{
-        background:var(--amber-bg);color:#78350F;
-        border:1px solid #FDE68A;border-left:3px solid var(--amber);
-    }
-    .sbox-err{
-        background:var(--red-bg);color:#991B1B;
-        border:1px solid #FECACA;border-left:3px solid var(--red);
+    .badge-ok {
+        background: var(--green);
+        color: white;
+        padding: 3px 10px;
+        border-radius: 12px;
+        font-size: .74em;
+        font-weight: 600;
+        display: inline-block;
     }
 
-    .empty{
-        text-align:center;padding:3.5rem 1.5rem;
-        color:var(--muted);border:2px dashed var(--border);
-        border-radius:var(--r-xl);background:var(--surface2);
-    }
-    .empty-icon{font-size:3rem;margin-bottom:.6rem;opacity:.5;}
-    .empty-title{font-size:1rem;font-weight:700;color:var(--muted2);margin-bottom:.3rem;}
-    .empty-sub{font-size:.82rem;color:#CBD5E1;}
-
-    .ms-stat-grid{
-        display:grid;
-        grid-template-columns:repeat(4,1fr);
-        gap:1rem;margin:1rem 0;
-    }
-    .ms-stat-card{
-        background:var(--surface);
-        border:1px solid var(--border);
-        border-radius:var(--r-lg);
-        padding:1.2rem 1.4rem;
-        position:relative;overflow:hidden;
-        transition:var(--tr);
-        box-shadow:var(--sh0);
-    }
-    .ms-stat-card::before{
-        content:'';position:absolute;
-        top:0;left:0;right:0;height:3px;
-        background:linear-gradient(90deg,var(--blue-l),var(--green-l));
-    }
-    .ms-stat-card:hover{
-        box-shadow:var(--sh2);
-        transform:translateY(-2px);
-    }
-    .ms-stat-label{
-        font-size:.68rem;font-weight:700;color:var(--muted);
-        text-transform:uppercase;letter-spacing:.12em;margin-bottom:.55rem;
-    }
-    .ms-stat-value{
-        font-family:'JetBrains Mono',monospace;
-        font-size:1.6rem;font-weight:600;
-        color:var(--green-l);line-height:1;
-    }
-    .ms-stat-sub{font-size:.72rem;color:var(--muted2);margin-top:.35rem;}
-
-    .ms-log-area{
-        background:#080D18;
-        border:1px solid rgba(59,130,246,.15);
-        border-radius:var(--r-lg);
-        padding:1.1rem 1.2rem;
-        font-family:'JetBrains Mono',monospace;
-        font-size:.75rem;color:#CBD5E1;
-        max-height:420px;overflow-y:auto;
-        white-space:pre-wrap;line-height:1.6;
-        box-shadow:inset 0 2px 8px rgba(0,0,0,.3);
-    }
-    .ms-log-area .log-ts{color:#334155;}
-    .ms-log-area .log-ok{color:#22D3EE;}
-    .ms-log-area .log-warn{color:#F59E0B;}
-    .ms-log-area .log-err{color:#F87171;}
-    .ms-log-area .log-info{color:#60A5FA;}
-
-    .flabel{
-        font-size:.76rem;font-weight:600;color:var(--muted);
-        text-transform:uppercase;letter-spacing:.6px;margin-bottom:.3rem;
+    @keyframes pulse {
+        0% { box-shadow: 0 0 0 0 rgba(239,68,68,0.4); }
+        70% { box-shadow: 0 0 0 10px rgba(239,68,68,0); }
+        100% { box-shadow: 0 0 0 0 rgba(239,68,68,0); }
     }
 
-    .lbadge{
-        display:inline-flex;align-items:center;gap:.35rem;
-        background:var(--blue-m);color:#fff;
-        border-radius:var(--r);padding:.3rem .85rem;
-        font-size:.78rem;font-weight:700;
-        margin-top:.5rem;box-shadow:var(--sh-blue);
-        letter-spacing:.2px;
+    /* Status boxes */
+    .sbox {
+        padding: .7rem 1.1rem;
+        border-radius: var(--r);
+        font-size: .88rem;
+        font-weight: 500;
+        margin: .4rem 0;
+        display: flex;
+        align-items: center;
+        gap: .5rem;
     }
-    .lbadge.amber{background:var(--amber);}
-    .lbadge.green{background:var(--green-l);}
+    .sbox-ok {
+        background: rgba(16,185,129,.15);
+        color: #34D399;
+        border: 1px solid rgba(16,185,129,.2);
+        border-left: 3px solid var(--green);
+    }
+    .sbox-warn {
+        background: rgba(245,158,11,.15);
+        color: #FBBF24;
+        border: 1px solid rgba(245,158,11,.2);
+        border-left: 3px solid var(--amber);
+    }
+    .sbox-err {
+        background: rgba(239,68,68,.15);
+        color: #F87171;
+        border: 1px solid rgba(239,68,68,.2);
+        border-left: 3px solid var(--red);
+    }
 
-    .ipill{
-        display:inline-flex;align-items:center;gap:.35rem;
-        background:var(--blue-bg);border:1px solid var(--blue-b);
-        color:var(--blue);border-radius:20px;
-        padding:.22rem .8rem;font-size:.78rem;font-weight:600;
-        margin-bottom:.5rem;
+    /* Empty state */
+    .empty {
+        text-align: center;
+        padding: 3.5rem 1.5rem;
+        color: var(--text-secondary);
+        border: 2px dashed var(--border-color);
+        border-radius: var(--r-xl);
+        background: var(--bg-secondary);
+    }
+    .empty-icon { font-size: 3rem; margin-bottom: .6rem; opacity: .5; }
+    .empty-title { font-size: 1rem; font-weight: 700; color: var(--text-muted); margin-bottom: .3rem; }
+    .empty-sub { font-size: .82rem; color: var(--text-muted); }
+
+    /* Stats */
+    .ms-stat-grid {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 1rem;
+        margin: 1rem 0;
+    }
+    .ms-stat-card {
+        background: var(--bg-card);
+        border: 1px solid var(--border-color);
+        border-radius: var(--r-lg);
+        padding: 1.2rem 1.4rem;
+        position: relative;
+        overflow: hidden;
+        transition: var(--tr);
+        box-shadow: var(--sh0);
+    }
+    .ms-stat-card::before {
+        content: '';
+        position: absolute;
+        top: 0;
+        left: 0;
+        right: 0;
+        height: 3px;
+        background: linear-gradient(90deg, var(--blue), var(--green));
+    }
+    .ms-stat-card:hover {
+        box-shadow: var(--sh2);
+        transform: translateY(-2px);
+        border-color: var(--border-hover);
+    }
+    .ms-stat-label {
+        font-size: .68rem;
+        font-weight: 700;
+        color: var(--text-secondary);
+        text-transform: uppercase;
+        letter-spacing: .12em;
+        margin-bottom: .55rem;
+    }
+    .ms-stat-value {
+        font-family: 'JetBrains Mono', monospace;
+        font-size: 1.6rem;
+        font-weight: 600;
+        color: var(--green);
+        line-height: 1;
+    }
+    .ms-stat-sub { font-size: .72rem; color: var(--text-muted); margin-top: .35rem; }
+
+    /* Log area */
+    .ms-log-area {
+        background: #080D18;
+        border: 1px solid rgba(59,130,246,.15);
+        border-radius: var(--r-lg);
+        padding: 1.1rem 1.2rem;
+        font-family: 'JetBrains Mono', monospace;
+        font-size: .75rem;
+        color: #CBD5E1;
+        max-height: 420px;
+        overflow-y: auto;
+        white-space: pre-wrap;
+        line-height: 1.6;
+        box-shadow: inset 0 2px 8px rgba(0,0,0,.3);
+    }
+    .ms-log-area .log-ts { color: #334155; }
+    .ms-log-area .log-ok { color: #22D3EE; }
+    .ms-log-area .log-warn { color: #F59E0B; }
+    .ms-log-area .log-err { color: #F87171; }
+    .ms-log-area .log-info { color: #60A5FA; }
+
+    /* Labels */
+    .flabel {
+        font-size: .76rem;
+        font-weight: 600;
+        color: var(--text-secondary);
+        text-transform: uppercase;
+        letter-spacing: .6px;
+        margin-bottom: .3rem;
+    }
+    .lbadge {
+        display: inline-flex;
+        align-items: center;
+        gap: .35rem;
+        background: var(--blue);
+        color: #fff;
+        border-radius: var(--r);
+        padding: .3rem .85rem;
+        font-size: .78rem;
+        font-weight: 700;
+        margin-top: .5rem;
+        box-shadow: 0 4px 16px rgba(59,130,246,.3);
+        letter-spacing: .2px;
+    }
+    .lbadge.amber { background: var(--amber); }
+    .lbadge.green { background: var(--green); }
+
+    .ipill {
+        display: inline-flex;
+        align-items: center;
+        gap: .35rem;
+        background: rgba(59,130,246,.15);
+        border: 1px solid rgba(59,130,246,.2);
+        color: var(--blue-light);
+        border-radius: 20px;
+        padding: .22rem .8rem;
+        font-size: .78rem;
+        font-weight: 600;
+        margin-bottom: .5rem;
     }
 
-    .uzone{
-        background:linear-gradient(135deg,var(--blue-bg),#DBEAFE88);
-        border:2px dashed #93C5FD;
-        border-radius:var(--r-lg);padding:1.1rem 1rem;
-        text-align:center;margin-bottom:.5rem;
-        transition:var(--tr);cursor:pointer;
+    /* Upload zone */
+    .uzone {
+        background: rgba(59,130,246,.08);
+        border: 2px dashed rgba(59,130,246,.2);
+        border-radius: var(--r-lg);
+        padding: 1.1rem 1rem;
+        text-align: center;
+        margin-bottom: .5rem;
+        transition: var(--tr);
+        cursor: pointer;
     }
-    .uzone:hover{border-color:var(--blue-l);background:linear-gradient(135deg,#DBEAFE,#EFF6FF);}
-    .uzone-icon{font-size:1.7rem;line-height:1;margin-bottom:.3rem;}
-    .uzone-title{font-weight:700;color:var(--blue);font-size:.9rem;margin-top:.2rem;}
-    .uzone-sub{font-size:.75rem;color:var(--muted);margin-top:.15rem;}
+    .uzone:hover {
+        border-color: var(--blue);
+        background: rgba(59,130,246,.12);
+    }
+    .uzone-icon { font-size: 1.7rem; line-height: 1; margin-bottom: .3rem; }
+    .uzone-title { font-weight: 700; color: var(--blue-light); font-size: .9rem; margin-top: .2rem; }
+    .uzone-sub { font-size: .75rem; color: var(--text-secondary); margin-top: .15rem; }
 
-    @media(max-width:1024px){
-        .ms-stat-grid{grid-template-columns:repeat(2,1fr);}
-        .hero-home h1{font-size:2.5rem;}
-        .home-grid{grid-template-columns:repeat(2,1fr);}
+    /* Métricas do Streamlit */
+    [data-testid="metric-container"] {
+        background: var(--bg-card);
+        border: 1px solid var(--border-color);
+        border-radius: var(--r-lg);
+        padding: .8rem 1rem;
+        box-shadow: var(--sh0);
+        transition: var(--tr);
     }
-    @media(max-width:768px){
-        .hero-home{min-height:auto;padding:2.5rem 1.5rem;}
-        .hero-home h1{font-size:1.8rem;}
-        .hero-home .logo{max-width:180px;}
-        .home-grid{grid-template-columns:1fr 1fr;gap:1rem;}
-        .home-card{padding:1.2rem 1rem;}
-        .home-card .icon{font-size:2rem;}
-        .ms-stat-grid{grid-template-columns:1fr 1fr;}
+    [data-testid="metric-container"]:hover {
+        box-shadow: var(--sh1);
+        border-color: var(--border-hover);
     }
-    @media(max-width:480px){
-        .hero-home h1{font-size:1.4rem;}
-        .home-grid{grid-template-columns:1fr;}
-        .hero-home .sub{font-size:.9rem;}
-        .ms-stat-grid{grid-template-columns:1fr;}
+    [data-testid="stMetricValue"] {
+        color: var(--text-primary) !important;
+        font-family: 'Inter', sans-serif !important;
+    }
+    [data-testid="stMetricLabel"] {
+        color: var(--text-secondary) !important;
+    }
+
+    /* Botões */
+    .stButton > button {
+        border-radius: var(--r) !important;
+        font-weight: 600 !important;
+        font-size: .86rem !important;
+        letter-spacing: .1px;
+        transition: var(--tr) !important;
+        background: var(--bg-card) !important;
+        color: var(--text-primary) !important;
+        border: 1px solid var(--border-color) !important;
+    }
+    .stButton > button:hover {
+        transform: translateY(-1px) !important;
+        box-shadow: var(--sh2) !important;
+        border-color: var(--border-hover) !important;
+        background: var(--bg-card-hover) !important;
+    }
+    .stButton > button[kind="primary"] {
+        background: linear-gradient(135deg, var(--blue), var(--blue-dark)) !important;
+        border: none !important;
+        color: white !important;
+        box-shadow: 0 4px 16px rgba(59,130,246,.3) !important;
+    }
+    .stButton > button[kind="primary"]:hover {
+        background: linear-gradient(135deg, #3B82F6, #1E3A8A) !important;
+        box-shadow: 0 6px 24px rgba(59,130,246,.4) !important;
+    }
+
+    /* Tabs */
+    .stTabs [data-baseweb="tab-list"] {
+        gap: 3px;
+        background: var(--bg-secondary);
+        border-radius: var(--r-lg);
+        padding: 5px;
+        border: 1px solid var(--border-color);
+    }
+    .stTabs [data-baseweb="tab"] {
+        border-radius: 8px;
+        font-weight: 600;
+        font-size: .85rem;
+        padding: .42rem 1rem;
+        transition: var(--tr);
+        color: var(--text-secondary);
+        border: none;
+    }
+    .stTabs [data-baseweb="tab"]:hover {
+        color: var(--blue-light);
+        background: rgba(59,130,246,.1);
+    }
+    .stTabs [aria-selected="true"] {
+        background: var(--bg-card) !important;
+        color: var(--blue-light) !important;
+        box-shadow: var(--sh1) !important;
+    }
+
+    /* Inputs */
+    .stTextInput input, .stNumberInput input, .stTextArea textarea {
+        border-radius: var(--r) !important;
+        border: 1.5px solid var(--border-color) !important;
+        font-size: .86rem !important;
+        transition: var(--tr);
+        background: var(--bg-secondary) !important;
+        color: var(--text-primary) !important;
+    }
+    .stTextInput input:focus, .stNumberInput input:focus, .stTextArea textarea:focus {
+        border-color: var(--blue) !important;
+        box-shadow: 0 0 0 3px rgba(59,130,246,.2) !important;
+    }
+
+    /* DataFrames */
+    [data-testid="stDataFrame"], [data-testid="stDataEditor"] {
+        border-radius: var(--r-lg) !important;
+        border: 1px solid var(--border-color) !important;
+        overflow: hidden;
+        box-shadow: var(--sh1) !important;
+        background: var(--bg-secondary) !important;
+    }
+
+    /* Selectbox */
+    .stSelectbox > div > div {
+        background: var(--bg-secondary) !important;
+        border-color: var(--border-color) !important;
+        color: var(--text-primary) !important;
+    }
+
+    /* Expander */
+    .streamlit-expanderHeader {
+        font-weight: 600;
+        font-size: .88rem;
+        color: var(--blue-light);
+        background: var(--bg-secondary);
+        border-radius: 8px;
+        padding: .48rem .8rem !important;
+    }
+    [data-testid="stExpander"] {
+        border: 1px solid var(--border-color) !important;
+        border-radius: var(--r) !important;
+    }
+
+    /* HR */
+    hr { border: none; border-top: 1px solid var(--border-color); margin: 1rem 0; }
+
+    /* File uploader */
+    [data-testid="stFileUploader"] {
+        background: var(--bg-secondary);
+        border: 2px dashed var(--border-color);
+        border-radius: var(--r-lg);
+        padding: 1rem;
+    }
+    [data-testid="stFileUploader"]:hover {
+        border-color: var(--blue);
+    }
+
+    /* Checkbox e Radio */
+    .stCheckbox label, .stRadio label {
+        color: var(--text-primary) !important;
+    }
+
+    /* Botão Voltar */
+    .btn-voltar {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.5rem;
+        background: rgba(59,130,246,.1);
+        border: 1px solid rgba(59,130,246,.2);
+        border-radius: var(--r);
+        padding: 0.4rem 1rem;
+        color: var(--blue-light);
+        font-weight: 600;
+        font-size: 0.85rem;
+        cursor: pointer;
+        transition: var(--tr);
+        text-decoration: none;
+        margin-bottom: 1rem;
+    }
+    .btn-voltar:hover {
+        background: rgba(59,130,246,.2);
+        border-color: var(--blue);
+    }
+
+    /* Responsividade */
+    @media(max-width:1024px) {
+        .ms-stat-grid { grid-template-columns: repeat(2, 1fr); }
+        .hero-home h1 { font-size: 2.5rem; }
+        .home-grid { grid-template-columns: repeat(2, 1fr); }
+    }
+    @media(max-width:768px) {
+        .hero-home { min-height: auto; padding: 2.5rem 1.5rem; }
+        .hero-home h1 { font-size: 1.8rem; }
+        .hero-home .logo { max-width: 180px; }
+        .home-grid { grid-template-columns: 1fr 1fr; gap: 1rem; }
+        .home-card { padding: 1.2rem 1rem; }
+        .home-card .icon { font-size: 2rem; }
+        .ms-stat-grid { grid-template-columns: 1fr 1fr; }
+    }
+    @media(max-width:480px) {
+        .hero-home h1 { font-size: 1.4rem; }
+        .home-grid { grid-template-columns: 1fr; }
+        .hero-home .sub { font-size: .9rem; }
+        .ms-stat-grid { grid-template-columns: 1fr; }
+        .ph-hdr { flex-wrap: wrap; }
     }
     </style>""")
 
@@ -1203,6 +1462,8 @@ def pagina_sped_auditoria():
 # ---- Módulo SPED Studio (organizador) ----
 
 def modulo_sped_studio():
+    botao_voltar()
+    
     ph("""
     <div class="ph-hdr">
         <span class="ph-icon">📊</span>
@@ -1237,6 +1498,8 @@ def modulo_sped_studio():
 # ==============================================================================
 
 def modulo_processador_txt():
+    botao_voltar()
+    
     ph("""
     <div class="ph-hdr">
         <span class="ph-icon">📄</span>
@@ -1604,6 +1867,8 @@ def render_ms_log():
 
 
 def modulo_mastersaf():
+    botao_voltar()
+    
     ph("""
     <div class="ph-hdr">
         <span class="ph-icon">⚡</span>
@@ -1660,8 +1925,8 @@ def modulo_mastersaf():
                 st.markdown("""
                 <div class="card">
                     <div class="flabel">🚀 Executar</div>
-                    <p style="font-size:0.82rem;color:var(--muted);margin-bottom:1rem;line-height:1.6;">
-                        O navegador será executado em <strong style="color:var(--blue-m)">modo headless</strong>.
+                    <p style="font-size:0.82rem;color:var(--text-secondary);margin-bottom:1rem;line-height:1.6;">
+                        O navegador será executado em <strong style="color:var(--blue-light)">modo headless</strong>.
                         Acompanhe o progresso em tempo real abaixo.
                     </p>
                 </div>
@@ -1913,7 +2178,10 @@ def modulo_mastersaf():
                     fig = px.histogram(fdf, x='Peso Bruto (kg)', nbins=30,
                                        title="Distribuição de Peso Bruto",
                                        color_discrete_sequence=['#3B82F6'])
-                    fig.update_layout(margin=dict(t=38,b=8,l=8,r=8))
+                    fig.update_layout(margin=dict(t=38,b=8,l=8,r=8),
+                                      paper_bgcolor='rgba(0,0,0,0)',
+                                      plot_bgcolor='rgba(0,0,0,0)',
+                                      font=dict(color='#E2E8F0'))
                     st.plotly_chart(fig, **_WS)
             with g2:
                 if not fdf.empty:
@@ -1922,7 +2190,10 @@ def modulo_mastersaf():
                                       title="Peso vs Valor Prestação",
                                       color_discrete_sequence=px.colors.qualitative.Set2)
                     fig2.update_layout(margin=dict(t=38,b=8,l=8,r=8),
-                                       legend=dict(orientation="h", y=-0.22))
+                                       legend=dict(orientation="h", y=-0.22),
+                                       paper_bgcolor='rgba(0,0,0,0)',
+                                       plot_bgcolor='rgba(0,0,0,0)',
+                                       font=dict(color='#E2E8F0'))
                     st.plotly_chart(fig2, **_WS)
         else:
             empty_state("📊", "Nenhum CT-e processado ainda",
@@ -1982,15 +2253,1206 @@ def modulo_mastersaf():
 # MÓDULO 4: SISTEMA INTEGRADO DUIMP
 # ==============================================================================
 
-# [NOTA: As classes HafelePDFParser, SigrawebPDFParser, DuimpPDFParser,
-# DataFormatter, XMLBuilder e funções auxiliares do DUIMP estão aqui.
-# Para manter o código com tamanho gerenciável, estou mantendo as mesmas
-# classes do código anterior, que já foram completamente definidas.]
+class HafelePDFParser:
+    _MAX_BUF_CHARS = 500_000
 
-# Por questões de espaço, estou incluindo apenas o esqueleto do DUIMP
-# com referência ao código completo que já foi fornecido anteriormente.
+    def __init__(self):
+        self.documento = {'cabecalho': {}, 'itens': [], 'totais': {}}
+        self._buffer = ""
+
+    @staticmethod
+    def _parse_valor(v: str) -> float:
+        try:
+            return float(v.strip().replace('.','').replace(',','.')) if v else 0.0
+        except Exception:
+            return 0.0
+
+    def parse_pdf(self, pdf_path: str) -> Dict:
+        try:
+            items_found: list = []
+            self._buffer = ""
+
+            with pdfplumber.open(pdf_path) as pdf:
+                total = len(pdf.pages)
+                chunk = _PDF_CHUNK_PAGES
+
+                for start in range(0, total, chunk):
+                    end = min(start + chunk, total)
+                    chunk_lines = []
+                    for page in pdf.pages[start:end]:
+                        t = page.extract_text(layout=False)
+                        if t:
+                            chunk_lines.append(t)
+
+                    chunk_text = self._buffer + "\n".join(chunk_lines)
+                    del chunk_lines
+
+                    is_last = (end == total)
+                    new_items, self._buffer = self._extract_items_from_chunk(
+                        chunk_text, is_last=is_last
+                    )
+                    items_found.extend(new_items)
+                    del chunk_text, new_items
+
+                    if len(self._buffer) > self._MAX_BUF_CHARS:
+                        self._buffer = self._buffer[-self._MAX_BUF_CHARS:]
+
+                    gc.collect()
+
+            if self._buffer.strip():
+                new_items, _ = self._extract_items_from_chunk(self._buffer, is_last=True)
+                items_found.extend(new_items)
+
+            self._buffer = ""
+            gc.collect()
+
+            self.documento['itens'] = items_found
+            self._calculate_totals()
+            return self.documento
+
+        except Exception as e:
+            logger.error(f"Erro HafelePDFParser: {e}")
+            st.error(f"Erro ao ler PDF: {str(e)}")
+            return self.documento
+
+    def _extract_items_from_chunk(self, text: str, is_last: bool):
+        pattern = r'(ITENS\s+DA\s+DUIMP\s*-\s*\d+)'
+        parts = re.split(pattern, text, flags=re.IGNORECASE)
+        items_found = []
+
+        if len(parts) <= 1:
+            return items_found, (text if not is_last else "")
+
+        n_complete = len(parts) - 1 if not is_last else len(parts)
+
+        for i in range(1, n_complete, 2):
+            header = parts[i]
+            content = parts[i+1] if (i+1) < len(parts) else ''
+            m = re.search(r'(\d+)', header)
+            num = int(m.group(1)) if m else (i // 2)
+            item = self._parse_item_block(num, content)
+            if item:
+                items_found.append(item)
+
+        if not is_last and len(parts) >= 2:
+            last_header = parts[-2] if len(parts) % 2 == 0 else ""
+            last_content = parts[-1]
+            residual = last_header + last_content
+        else:
+            residual = ""
+
+        return items_found, residual
+
+    def _parse_item_block(self, item_num: int, text: str) -> Dict:
+        try:
+            pv = self._parse_valor
+            item = {
+                'numero_item': item_num, 'numeroAdicao': str(item_num).zfill(3),
+                'ncm':'', 'codigo_interno':'', 'nome_produto':'',
+                'quantidade':0.0, 'quantidade_comercial':0.0,
+                'peso_liquido':0.0, 'valor_total':0.0,
+                'ii_valor_devido':0.0,'ii_base_calculo':0.0,'ii_aliquota':0.0,
+                'ipi_valor_devido':0.0,'ipi_base_calculo':0.0,'ipi_aliquota':0.0,
+                'pis_valor_devido':0.0,'pis_base_calculo':0.0,'pis_aliquota':0.0,
+                'cofins_valor_devido':0.0,'cofins_base_calculo':0.0,'cofins_aliquota':0.0,
+                'frete_internacional':0.0,'seguro_internacional':0.0,
+                'local_aduaneiro':0.0,'aduaneiro_reais':0.0,'valorAduaneiroReal':0.0,
+                'paisOrigem':'','fornecedor_raw':'','endereco_raw':'',
+                'unidade':'UNIDADE','pesoLiq':'0','valorTotal':'0','valorUnit':'0',
+                'moeda':'EURO/COM.EUROPEIA',
+            }
+            m = re.search(r'Código interno\s*([\d\.]+)', text, re.IGNORECASE)
+            if m: item['codigo_interno'] = m.group(1).replace('.','')
+            m = re.search(r'(\d{4}\.\d{2}\.\d{2})', text)
+            if m: item['ncm'] = m.group(1).replace('.','')
+            m = re.search(r'Qtde Unid\. Comercial\s*([\d\.,]+)', text)
+            if m: item['quantidade_comercial'] = pv(m.group(1))
+            m = re.search(r'Qtde Unid\. Estatística\s*([\d\.,]+)', text)
+            item['quantidade'] = pv(m.group(1)) if m else item['quantidade_comercial']
+            m = re.search(r'Valor Tot\. Cond Venda\s*([\d\.,]+)', text)
+            if m: item['valor_total'] = pv(m.group(1)); item['valorTotal'] = m.group(1)
+            m = re.search(r'Peso Líquido \(KG\)\s*([\d\.,]+)', text, re.IGNORECASE)
+            if m: item['peso_liquido'] = pv(m.group(1)); item['pesoLiq'] = m.group(1)
+            m = re.search(r'Frete Internac\. \(R\$\)\s*([\d\.,]+)', text)
+            if m: item['frete_internacional'] = pv(m.group(1))
+            m = re.search(r'Seguro Internac\. \(R\$\)\s*([\d\.,]+)', text)
+            if m: item['seguro_internacional'] = pv(m.group(1))
+            m = re.search(r'Local Aduaneiro \(R\$\)\s*([\d\.,]+)', text)
+            if m:
+                item['local_aduaneiro'] = pv(m.group(1))
+                item['aduaneiro_reais'] = item['local_aduaneiro']
+                item['valorAduaneiroReal'] = item['local_aduaneiro']
+            tax_pats = re.findall(
+                r'Base de Cálculo.*?\(R\$\)\s*([\d\.,]+).*?% Alíquota\s*([\d\.,]+)'
+                r'.*?Valor.*?(?:Devido|A Recolher|Calculado).*?\(R\$\)\s*([\d\.,]+)',
+                text, re.DOTALL | re.IGNORECASE)
+            for base_s, aliq_s, val_s in tax_pats:
+                base = pv(base_s); aliq = pv(aliq_s); val = pv(val_s)
+                if 1.60 <= aliq <= 3.00:
+                    item['pis_aliquota']=aliq; item['pis_base_calculo']=base; item['pis_valor_devido']=val
+                elif 7.00 <= aliq <= 12.00:
+                    item['cofins_aliquota']=aliq; item['cofins_base_calculo']=base; item['cofins_valor_devido']=val
+                elif aliq > 12.00:
+                    item['ii_aliquota']=aliq; item['ii_base_calculo']=base; item['ii_valor_devido']=val
+                elif aliq >= 0 and item['ipi_aliquota'] == 0:
+                    item['ipi_aliquota']=aliq; item['ipi_base_calculo']=base; item['ipi_valor_devido']=val
+            item['total_impostos'] = (
+                item['ii_valor_devido'] + item['ipi_valor_devido']
+                + item['pis_valor_devido'] + item['cofins_valor_devido']
+            )
+            item['valor_total_com_impostos'] = item['valor_total'] + item['total_impostos']
+            return item
+        except Exception as e:
+            logger.error(f"Erro item {item_num}: {e}")
+            return None
+
+    def _calculate_totals(self):
+        if self.documento['itens']:
+            itens = self.documento['itens']
+            self.documento['totais'] = {
+                'valor_total_mercadoria': sum(i['valor_total'] for i in itens),
+                'total_valor_aduaneiro': sum(i.get('aduaneiro_reais',0) for i in itens),
+                'total_ii': sum(i['ii_valor_devido'] for i in itens),
+                'total_ipi': sum(i['ipi_valor_devido'] for i in itens),
+                'total_pis': sum(i['pis_valor_devido'] for i in itens),
+                'total_cofins': sum(i['cofins_valor_devido'] for i in itens),
+                'total_frete': sum(i['frete_internacional'] for i in itens),
+                'total_seguro': sum(i['seguro_internacional'] for i in itens),
+                'quantidade_adicoes': len(itens),
+            }
+
+
+class SigrawebPDFParser:
+    def __init__(self):
+        self.documento = {'cabecalho': {}, 'itens': [], 'totais': {}}
+
+    @staticmethod
+    def _parse_valor(v: str) -> float:
+        try:
+            return float(str(v).strip().replace('.','').replace(',','.')) if v else 0.0
+        except Exception:
+            return 0.0
+
+    @staticmethod
+    def _fmt_date(d: str) -> str:
+        try:
+            return datetime.strptime(d.strip(), '%d/%m/%Y').strftime('%Y%m%d')
+        except Exception:
+            return d.replace('/','').replace('-','')[:8]
+
+    _MAX_BUF_CHARS = 500_000
+
+    def _extract_fob_aduaneiro_siscomex(self, p1: str, p2: str) -> Dict[str, str]:
+        combined = p1 + "\n" + p2
+        
+        def _e(pat, text, default='0'):
+            m = re.search(pat, text, re.IGNORECASE)
+            return m.group(1).strip().replace('.','').replace(',','.') if m else default
+        
+        fob_usd = _e(r'FOB\s+[\d]+\s*-\s*[A-Z\/\.]+\s+[\d\.,]+\s+([\d\.,]+)\s+[\d\.,]+', combined)
+        fob_brl = _e(r'FOB\s+[\d]+\s*-\s*[A-Z\/\.]+\s+[\d\.,]+\s+[\d\.,]+\s+([\d\.,]+)', combined)
+        
+        if fob_usd == '0':
+            fob_usd = _e(r'FOB\s*:.*?;\s*([\d\.,]+)\s*\(USD\)', combined)
+        if fob_brl == '0':
+            fob_brl = _e(r'FOB\s*:.*?\(USD\)\s*;\s*([\d\.,]+)\s*\(BRL\)', combined)
+        
+        adu_usd = _e(r'VALOR ADUANEIRO\s+([\d\.,]+)\s+[\d\.,]+', combined)
+        adu_brl = _e(r'VALOR ADUANEIRO\s+[\d\.,]+\s+([\d\.,]+)', combined)
+        
+        if adu_usd == '0':
+            adu_usd = _e(r'VALOR ADUANEIRO\s*:\s*([\d\.,]+)\s*\(USD\)', combined)
+        if adu_brl == '0':
+            adu_brl = _e(r'VALOR ADUANEIRO\s*:.*?;\s*([\d\.,]+)\s*\(BRL\)', combined)
+        
+        siscomex = _e(r'[\d\.,]+\s+[\d\.,]+\s+[\d\.,]+\s+[\d\.,]+\s+([\d\.,]+)\s+Itau', p1)
+        
+        if siscomex == '0':
+            siscomex = _e(r'SISCOMEX\s*:\s*([\d\.,]+)', p1)
+        if siscomex == '0':
+            m = re.search(r'([\d\.,]+)\s+Itau\s+(\d+)\s+([\d\-]+)', p1, re.IGNORECASE)
+            if m:
+                siscomex = m.group(1).strip().replace('.','').replace(',','.')
+        
+        def _fmt(val):
+            if not val or val == '0':
+                return '000000000000000'
+            clean = re.sub(r'\D', '', str(val))
+            return clean.zfill(15) if clean else '000000000000000'
+        
+        result = {
+            'fobUSD': _fmt(fob_usd),
+            'fobBRL': _fmt(fob_brl),
+            'aduaneiroUSD': _fmt(adu_usd),
+            'aduaneiroBRL': _fmt(adu_brl),
+            'siscomex': _fmt(siscomex),
+        }
+        
+        self.documento['cabecalho']['_fobUSD_raw'] = fob_usd
+        self.documento['cabecalho']['_fobBRL_raw'] = fob_brl
+        self.documento['cabecalho']['_aduaneiroUSD_raw'] = adu_usd
+        self.documento['cabecalho']['_aduaneiroBRL_raw'] = adu_brl
+        self.documento['cabecalho']['_siscomex_raw'] = siscomex
+        
+        return result
+
+    def parse_pdf(self, pdf_path: str) -> Dict:
+        try:
+            items_found: list = []
+            buffer = ""
+
+            with pdfplumber.open(pdf_path) as pdf:
+                total = len(pdf.pages)
+                chunk = _PDF_CHUNK_PAGES
+
+                p1 = pdf.pages[0].extract_text(layout=False) or "" if total > 0 else ""
+                p2 = pdf.pages[1].extract_text(layout=False) or "" if total > 1 else ""
+                
+                self._extract_header(p1, p2)
+                del p1, p2
+
+                for start in range(0, total, chunk):
+                    end = min(start + chunk, total)
+                    chunk_pages = []
+                    for page in pdf.pages[start:end]:
+                        t = page.extract_text(layout=False)
+                        if t:
+                            chunk_pages.append(t)
+
+                    chunk_text = buffer + "\n".join(chunk_pages)
+                    del chunk_pages
+
+                    is_last = (end == total)
+                    new_items, buffer = self._extract_items_from_chunk(
+                        chunk_text, is_last=is_last
+                    )
+                    items_found.extend(new_items)
+                    del chunk_text, new_items
+
+                    if len(buffer) > self._MAX_BUF_CHARS:
+                        buffer = buffer[-self._MAX_BUF_CHARS:]
+
+                    gc.collect()
+
+            if buffer.strip():
+                new_items, _ = self._extract_items_from_chunk(buffer, is_last=True)
+                items_found.extend(new_items)
+
+            buffer = ""
+            gc.collect()
+
+            self.documento['itens'] = items_found
+            self._calculate_totals()
+            return self.documento
+
+        except Exception as e:
+            logger.error(f"Erro SigrawebPDFParser: {e}")
+            st.error(f"Erro ao ler PDF Sigraweb: {str(e)}")
+            return self.documento
+
+    def _extract_items_from_chunk(self, text: str, is_last: bool):
+        pattern = r'Informações da Adição Nº:\s*(\d+)'
+        parts = re.split(pattern, text)
+        items_found = []
+
+        if len(parts) <= 1:
+            return items_found, (text if not is_last else "")
+
+        n_complete = len(parts) - 1 if not is_last else len(parts)
+
+        for i in range(1, n_complete, 2):
+            num_str = parts[i].strip()
+            content = parts[i+1] if (i+1) < len(parts) else ''
+            item = self._parse_item_block(num_str, content)
+            if item:
+                items_found.append(item)
+
+        if not is_last and len(parts) >= 2:
+            last_num = parts[-2] if len(parts) % 2 == 0 else ""
+            last_content = parts[-1]
+            residual = (f"Informações da Adição Nº: {last_num}\n"
+                        if last_num else "") + last_content
+        else:
+            residual = ""
+
+        return items_found, residual
+
+    def _extract_header(self, p1: str, p2: str):
+        def _f(pat, text, default=''):
+            m = re.search(pat, text, re.IGNORECASE)
+            return m.group(1).strip() if m else default
+        
+        h = {}
+        h['numeroDI'] = _f(r'Número DI:\s*([\w]+)', p1)
+        h['sigraweb'] = _f(r'SIGRAWEB:\s*([\w]+)', p1)
+        h['cnpj'] = _f(r'CNPJ:\s*([\d\.\/\-]+)', p1)
+        h['nomeImportador'] = _f(r'Nome da Empresa:\s*(.+?)(?:\n|CNPJ)', p1)
+        dr = _f(r'Data Registro:([\d\-T:\.+]+)', p1)
+        h['dataRegistro'] = dr[:10].replace('-','') if dr else ''
+        h['pesoBruto'] = _f(r'Peso Bruto:\s*([\d\.,]+)', p1)
+        h['pesoLiquido'] = _f(r'Peso Líquido:\s*([\d\.,]+)', p1)
+        h['volumes'] = _f(r'Volumes:\s*([\d]+)', p1)
+        h['embalagem'] = _f(r'Embalagem:\s*(\w+)', p1)
+        h['urf'] = _f(r'URF de Entrada:\s*(\d+)', p1, '0917900')
+        h['urfDespacho'] = _f(r'URF de Despacho:\s*(\d+)', p1, '0917900')
+        h['modalidade'] = _f(r'Modalidade de Despacho:\s*(.+?)(?:\n)', p1, 'Normal')
+        h['viaTransporte'] = _f(r'Via Transporte:\s*(.+?)(?:\n)', p1, 'Aéreo')
+        pais_raw = _f(r'País de Procedência:\s*\d+\s*(.+?)(?:\n|Local|Incoterms)', p1)
+        h['paisProcedencia'] = pais_raw.strip() if pais_raw else 'Alemanha'
+        h['localEmbarque'] = _f(r'Local de Embarque:\s*(.+?)(?:\n|Data)', p1)
+        h['dataEmbarque'] = _f(r'Data de Embarque:\s*([\d\/]+)', p1)
+        h['dataChegada'] = _f(r'Data de Chegada no Brasil:\s*([\d\/]+)', p1)
+        h['incoterms'] = _f(r'Incoterms:\s*(\w+)', p1, 'FCA')
+        h['idtConhecimento'] = _f(r'IDT\. Conhecimento:\s*([\w]+)', p1)
+        h['idtMaster'] = _f(r'IDT\. Master:\s*([\w]+)', p1)
+        h['transportador'] = _f(r'Transportador:\s*(.+?)(?:\n|Agente)', p1)
+        h['agenteCarga'] = _f(r'Agente de Carga:\s*(.+?)(?:\n|CE)', p1)
+        
+        combined = p1 + "\n" + p2
+        
+        h['taxaEUR'] = _f(r'Taxa EUR:\s*([\d\.,]+)', combined)
+        h['taxaDolar'] = _f(r'Taxa do Dólar:\s*([\d\.,]+)', combined)
+        h['freteEUR'] = _f(r'Frete:\s*([\d\.,]+)\s*\(EUR\)', combined)
+        h['freteUSD'] = _f(r'Frete:.*?\(EUR\)\s*;\s*([\d\.,]+)\s*\(USD\)', combined)
+        h['freteBRL'] = _f(r'Frete:.*?\(USD\)\s*;\s*([\d\.,]+)\s*\(BRL\)', combined)
+        h['seguroUSD'] = _f(r'Seguro:\s*([\d\.,]+)\s*\(USD\)', combined)
+        h['seguroBRL'] = _f(r'Seguro:.*?;\s*([\d\.,]+)\s*\(BRL\)', combined)
+        h['cifUSD'] = _f(r'CIF:\s*([\d\.,]+)\s*\(USD\)', combined)
+        h['cifBRL'] = _f(r'CIF:.*?;\s*([\d\.,]+)\s*\(BRL\)', combined)
+        
+        tm = re.search(
+            r'([\d\.,]+)\s+([\d\.,]+)\s+([\d\.,]+)\s+([\d\.,]+)\s+([\d\.,]+)'
+            r'\s+Itau\s+(\d+)\s+([\d\-]+)',
+            p1, re.IGNORECASE)
+        if tm:
+            h['totalII'] = tm.group(1).replace('.','').replace(',','.')
+            h['totalIPI'] = tm.group(2).replace('.','').replace(',','.')
+            h['totalPIS'] = tm.group(3).replace('.','').replace(',','.')
+            h['totalCOFINS'] = tm.group(4).replace('.','').replace(',','.')
+            h['totalSiscomex'] = tm.group(5).replace('.','').replace(',','.')
+            h['banco'] = 'Itau'
+            h['agencia'] = tm.group(6)
+            h['conta'] = tm.group(7)
+        else:
+            h['totalII'] = h['totalIPI'] = h['totalPIS'] = h['totalCOFINS'] = '0'
+            h['totalSiscomex'] = '0'
+            h['banco'] = _f(r'Banco:\s*(\w+)', p2, 'Itau')
+            h['agencia'] = _f(r'Agência:\s*([\d]+)', p2, '3715')
+            h['conta'] = _f(r'Conta Corrente:\s*([\w\-]+)', p2, '')
+        
+        h['dataEmbarqueISO'] = self._fmt_date(h['dataEmbarque']) if h['dataEmbarque'] else ''
+        h['dataChegadaISO'] = self._fmt_date(h['dataChegada']) if h['dataChegada'] else ''
+        
+        extracted = self._extract_fob_aduaneiro_siscomex(p1, p2)
+        
+        h['fobUSD'] = extracted['fobUSD']
+        h['fobBRL'] = extracted['fobBRL']
+        h['valorAduaneiroUSD'] = extracted['aduaneiroUSD']
+        h['valorAduaneiroBRL'] = extracted['aduaneiroBRL']
+        h['siscomex'] = extracted['siscomex']
+        
+        self.documento['cabecalho'] = h
+
+    def _parse_item_block(self, num_str: str, text: str) -> Optional[Dict]:
+        try:
+            pv = self._parse_valor
+            item = {
+                'numero_item': int(num_str), 'numeroAdicao': num_str.zfill(3),
+                'ncm':'', 'codigo_interno':'', 'descricao':'',
+                'paisOrigem':'', 'fornecedor_raw':'HAFELE SE & CO KG', 'endereco_raw':'',
+                'quantidade':'0', 'quantidade_comercial':'0', 'unidade':'PECA',
+                'pesoLiq':'0', 'valorTotal':'0', 'valorUnit':'0',
+                'valorAduaneiroReal':0.0, 'valorAduaneiroUSD':0.0, 'aduaneiro_reais':0.0,
+                'moeda':'EURO/COM.EUROPEIA',
+                'freteUSD':0.0,'freteReal':0.0,'seguroUSD':0.0,'seguroReal':0.0,
+                'frete_internacional':0.0,'seguro_internacional':0.0,'local_aduaneiro':0.0,
+                'ii_aliquota':0.0,'ii_base_calculo':0.0,'ii_valor_devido':0.0,
+                'ipi_aliquota':0.0,'ipi_base_calculo':0.0,'ipi_valor_devido':0.0,
+                'pis_aliquota':0.0,'pis_base_calculo':0.0,'pis_valor_devido':0.0,
+                'cofins_aliquota':0.0,'cofins_base_calculo':0.0,'cofins_valor_devido':0.0,
+            }
+            m = re.search(r'NR NCM:\s*(\d+)', text)
+            if m: item['ncm'] = m.group(1)
+            m = re.search(
+                r'Part Number:\s*([\S]+)\s*\|\s*Descrição:\s*(.+?)(?=\nFabricante:|$)',
+                text, re.DOTALL)
+            if m:
+                item['codigo_interno'] = m.group(1).strip()
+                item['descricao'] = re.sub(r'\s+',' ', m.group(2).strip())
+            else:
+                m2 = re.search(r'Descrição:\s*(.+?)(?=\nFabricante:|$)', text, re.DOTALL)
+                if m2: item['descricao'] = re.sub(r'\s+',' ', m2.group(1).strip())
+            m = re.search(r'Peso Líquido:\s*([\d\.,]+)', text)
+            if m: item['pesoLiq'] = m.group(1)
+            m = re.search(r'Qnt\. Estatística:\s*([\d\.,]+)', text)
+            if m: item['quantidade'] = m.group(1)
+            m = re.search(r'Quantidade:\s*([\d\.,]+)\s+Unidade:', text)
+            item['quantidade_comercial'] = m.group(1) if m else item['quantidade']
+            m = re.search(r'Unidade:\s*(\S+)', text)
+            if m: item['unidade'] = m.group(1).upper()
+            m = re.search(r'Valor FOB:\s*([\d\.,]+)\s+EUR', text)
+            if m: item['valorTotal'] = m.group(1)
+            m = re.search(r'Valor Unitário:\s*([\d\.,]+)', text)
+            if m: item['valorUnit'] = m.group(1)
+            m = re.search(r'Valor Aduaneiro USD:\s*([\d\.,]+)', text)
+            if m: item['valorAduaneiroUSD'] = pv(m.group(1))
+            m = re.search(r'Valor Aduaneiro Real:\s*([\d\.,]+)', text)
+            if m:
+                item['valorAduaneiroReal'] = pv(m.group(1))
+                item['aduaneiro_reais'] = pv(m.group(1))
+                item['ii_base_calculo'] = pv(m.group(1))
+            m = re.search(r'Valor Frete:\s*([\d\.,]+)\s+USD', text)
+            if m: item['freteUSD'] = pv(m.group(1))
+            m = re.search(r'Valor Frete Real:\s*([\d\.,]+)', text)
+            if m:
+                item['freteReal'] = pv(m.group(1))
+                item['frete_internacional'] = item['freteReal']
+            m = re.search(r'Valor Seguro:\s*([\d\.,]+)\s+USD', text)
+            if m: item['seguroUSD'] = pv(m.group(1))
+            m = re.search(r'Valor Seguro Real:\s*([\d\.,]+)', text)
+            if m:
+                item['seguroReal'] = pv(m.group(1))
+                item['seguro_internacional'] = item['seguroReal']
+            m = re.search(r'Moeda LI:\s*(.+?)(?:\n|Valor)', text)
+            if m: item['moeda'] = m.group(1).strip()
+            m = re.search(r'País Origem:\s*(.+?)(?:\n|Fabricante)', text)
+            if m: item['paisOrigem'] = m.group(1).strip()
+            m = re.search(r'Fornecedor:\s*(.+?)(?:\n|País)', text)
+            if m: item['fornecedor_raw'] = m.group(1).strip()
+            m = re.search(
+                r'^II\s+([\d\.,]+)\s+[\d\.,]+\s+[\d\.,]+\s+[\d\.,]+\s+[\d\.,]+\s+'
+                r'([\d\.,]+)\s+([\d\.,]+)', text, re.MULTILINE)
+            if m:
+                item['ii_aliquota'] = pv(m.group(1))
+                item['ii_base_calculo'] = pv(m.group(2))
+                item['ii_valor_devido'] = pv(m.group(3))
+            m = re.search(
+                r'^IPI\s+([\d\.,]+)\s+[\d\.,]+\s+[\d\.,]+\s+[\d\.,]+\s+'
+                r'([\d\.,]+)\s+([\d\.,]+)', text, re.MULTILINE)
+            if m:
+                item['ipi_aliquota'] = pv(m.group(1))
+                item['ipi_base_calculo'] = pv(m.group(2))
+                item['ipi_valor_devido'] = pv(m.group(3))
+            m = re.search(
+                r'^PIS\s+([\d\.,]+)\s+[\d\.,]+\s+[\d\.,]+\s+[\d\.,]+\s+'
+                r'([\d\.,]+)\s+([\d\.,]+)', text, re.MULTILINE)
+            if m:
+                item['pis_aliquota'] = pv(m.group(1))
+                item['pis_base_calculo'] = pv(m.group(2))
+                item['pis_valor_devido'] = pv(m.group(3))
+            m = re.search(
+                r'^COFINS\s+([\d\.,]+)\s+[\d\.,]+\s+[\d\.,]+\s+[\d\.,]+\s+'
+                r'([\d\.,]+)\s+([\d\.,]+)', text, re.MULTILINE)
+            if m:
+                item['cofins_aliquota'] = pv(m.group(1))
+                item['cofins_base_calculo'] = pv(m.group(2))
+                item['cofins_valor_devido'] = pv(m.group(3))
+            item['total_impostos'] = (
+                item['ii_valor_devido'] + item['ipi_valor_devido']
+                + item['pis_valor_devido'] + item['cofins_valor_devido']
+            )
+            item['valor_total_com_impostos'] = (
+                pv(str(item['valorTotal'])) + item['total_impostos']
+            )
+            return item
+        except Exception as e:
+            logger.error(f"Erro item {num_str}: {e}")
+            return None
+
+    def _calculate_totals(self):
+        if self.documento['itens']:
+            pv = self._parse_valor
+            itens = self.documento['itens']
+            self.documento['totais'] = {
+                'valor_total_fob': sum(pv(str(i.get('valorTotal',0))) for i in itens),
+                'peso_liquido_total': sum(pv(str(i.get('pesoLiq',0))) for i in itens),
+                'total_valor_aduaneiro': sum(i.get('aduaneiro_reais',0) for i in itens),
+                'total_ii': sum(i.get('ii_valor_devido',0) for i in itens),
+                'total_ipi': sum(i.get('ipi_valor_devido',0) for i in itens),
+                'total_pis': sum(i.get('pis_valor_devido',0) for i in itens),
+                'total_cofins': sum(i.get('cofins_valor_devido',0) for i in itens),
+                'total_frete': sum(i.get('frete_internacional',0) for i in itens),
+                'total_seguro': sum(i.get('seguro_internacional',0) for i in itens),
+                'quantidade_adicoes': len(itens),
+            }
+
+
+class DuimpPDFParser:
+    def __init__(self, pdf_path: str):
+        self.pdf_path = pdf_path
+        self.header = {}
+        self.items = []
+        self._buf = ""
+
+    @staticmethod
+    def _filter(line: str) -> bool:
+        ls = line.strip()
+        if not ls: return False
+        if "Extrato da DUIMP" in ls: return False
+        if "Data, hora e responsável" in ls: return False
+        if re.match(r'^\d+\s*/\s*\d+$', ls): return False
+        return True
+
+    def preprocess(self):
+        doc = fitz.open(self.pdf_path)
+        total = doc.page_count
+        self._buf = ""
+
+        for start in range(0, total, _PDF_CHUNK_PAGES):
+            end = min(start + _PDF_CHUNK_PAGES, total)
+            lines = []
+            for idx in range(start, end):
+                page = doc[idx]
+                for line in page.get_text("text").split('\n'):
+                    if self._filter(line):
+                        lines.append(line)
+                page = None
+
+            chunk_text = "\n".join(lines)
+            del lines
+            gc.collect()
+
+            if start == 0 and not self.header:
+                self._extract_header_from_chunk(chunk_text)
+
+            self._buf, new_items = self._extract_items_streaming(
+                self._buf + chunk_text, is_last=(end == total)
+            )
+            self.items.extend(new_items)
+
+            del chunk_text
+            gc.collect()
+
+        doc.close()
+
+        if self._buf.strip():
+            _, remaining = self._extract_items_streaming(self._buf, is_last=True)
+            self.items.extend(remaining)
+
+        self._buf = ""
+        gc.collect()
+
+    def extract_header(self):
+        pass
+
+    def extract_items(self):
+        pass
+
+    def _extract_header_from_chunk(self, text: str):
+        self.header["numeroDUIMP"] = self._r(r"Extrato da Duimp\s+([\w\-\/]+)", text)
+        self.header["cnpj"] = self._r(r"CNPJ do importador:\s*([\d\.\/\-]+)", text)
+        self.header["nomeImportador"] = self._r(r"Nome do importador:\s*\n?(.+)", text)
+        self.header["pesoBruto"] = self._r(r"Peso Bruto \(kg\):\s*([\d\.,]+)", text)
+        self.header["pesoLiquido"] = self._r(r"Peso Liquido \(kg\):\s*([\d\.,]+)", text)
+        self.header["urf"] = self._r(r"Unidade de despacho:\s*([\d]+)", text)
+        self.header["paisProcedencia"] = self._r(r"País de Procedência:\s*\n?(.+)", text)
+
+    def _extract_items_streaming(self, text: str, is_last: bool):
+        parts = re.split(r"Item\s+(\d+)", text)
+        items_found = []
+
+        if len(parts) <= 1:
+            residual = "" if is_last else text
+            return residual, items_found
+
+        n_safe = len(parts) - 1 if not is_last else len(parts)
+
+        for i in range(1, n_safe, 2):
+            num = parts[i]
+            content = parts[i + 1] if (i + 1) < len(parts) else ""
+            item = self._parse_item_block(num, content)
+            if item:
+                items_found.append(item)
+            parts[i + 1] = ""
+
+        if not is_last and len(parts) >= 2:
+            last_num = parts[-2] if len(parts) % 2 == 0 else ""
+            last_content = parts[-1]
+            residual = (f"Item {last_num}\n" if last_num else "") + last_content
+        else:
+            residual = ""
+
+        del parts
+        return residual, items_found
+
+    def _parse_item_block(self, num: str, content: str) -> Optional[Dict]:
+        item = {"numeroAdicao": num.strip()}
+        item["ncm"] = self._r(r"NCM:\s*([\d\.]+)", content)
+        item["paisOrigem"] = self._r(r"País de origem:\s*\n?(.+)", content)
+        item["quantidade"] = self._r(r"Quantidade na unidade estatística:\s*([\d\.,]+)", content)
+        item["quantidade_comercial"] = self._r(r"Quantidade na unidade comercializada:\s*([\d\.,]+)", content)
+        item["unidade"] = self._r(r"Unidade estatística:\s*(.+)", content)
+        item["pesoLiq"] = self._r(r"Peso líquido \(kg\):\s*([\d\.,]+)", content)
+        item["valorUnit"] = self._r(r"Valor unitário na condição de venda:\s*([\d\.,]+)", content)
+        item["valorTotal"] = self._r(r"Valor total na condição de venda:\s*([\d\.,]+)", content)
+        item["moeda"] = self._r(r"Moeda negociada:\s*(.+)", content)
+        m = re.search(r"Código do Exportador Estrangeiro:\s*(.+?)(?=\n\s*(?:Endereço|Dados))",
+                      content, re.DOTALL)
+        item["fornecedor_raw"] = m.group(1).strip() if m else ""
+        m = re.search(r"Endereço:\s*(.+?)(?=\n\s*(?:Dados da Mercadoria|Aplicação))",
+                      content, re.DOTALL)
+        item["endereco_raw"] = m.group(1).strip() if m else ""
+        m = re.search(r"Detalhamento do Produto:\s*(.+?)"
+                      r"(?=\n\s*(?:Número de Identificação|Versão|Código de Class|Descrição complementar))",
+                      content, re.DOTALL)
+        item["descricao"] = m.group(1).strip() if m else ""
+        m = re.search(r"Descrição complementar da mercadoria:\s*(.+?)(?=\n|$)",
+                      content, re.DOTALL)
+        item["desc_complementar"] = m.group(1).strip() if m else ""
+        return item
+
+    def _r(self, pat, text):
+        m = re.search(pat, text)
+        return m.group(1).strip() if m else ""
+
+
+def montar_descricao_final(desc_complementar, codigo_extra, detalhamento):
+    return f"{str(desc_complementar).strip()} - {str(codigo_extra).strip()} - {str(detalhamento).strip()}"
+
+
+ADICAO_FIELDS_ORDER = [
+    {"tag":"acrescimo","type":"complex","children":[
+        {"tag":"codigoAcrescimo","default":"17"},
+        {"tag":"denominacao","default":"OUTROS ACRESCIMOS AO VALOR ADUANEIRO"},
+        {"tag":"moedaNegociadaCodigo","default":"978"},
+        {"tag":"moedaNegociadaNome","default":"EURO/COM.EUROPEIA"},
+        {"tag":"valorMoedaNegociada","default":"000000000000000"},
+        {"tag":"valorReais","default":"000000000000000"},
+    ]},
+    {"tag":"cideValorAliquotaEspecifica","default":"00000000000"},
+    {"tag":"cideValorDevido","default":"000000000000000"},
+    {"tag":"cideValorRecolher","default":"000000000000000"},
+    {"tag":"codigoRelacaoCompradorVendedor","default":"3"},
+    {"tag":"codigoVinculoCompradorVendedor","default":"1"},
+    {"tag":"cofinsAliquotaAdValorem","default":"00965"},
+    {"tag":"cofinsAliquotaEspecificaQuantidadeUnidade","default":"000000000"},
+    {"tag":"cofinsAliquotaEspecificaValor","default":"0000000000"},
+    {"tag":"cofinsAliquotaReduzida","default":"00000"},
+    {"tag":"cofinsAliquotaValorDevido","default":"000000000000000"},
+    {"tag":"cofinsAliquotaValorRecolher","default":"000000000000000"},
+    {"tag":"condicaoVendaIncoterm","default":"FCA"},
+    {"tag":"condicaoVendaLocal","default":""},
+    {"tag":"condicaoVendaMetodoValoracaoCodigo","default":"01"},
+    {"tag":"condicaoVendaMetodoValoracaoNome","default":"METODO 1 - ART. 1 DO ACORDO (DECRETO 92930/86)"},
+    {"tag":"condicaoVendaMoedaCodigo","default":"978"},
+    {"tag":"condicaoVendaMoedaNome","default":"EURO/COM.EUROPEIA"},
+    {"tag":"condicaoVendaValorMoeda","default":"000000000000000"},
+    {"tag":"condicaoVendaValorReais","default":"000000000000000"},
+    {"tag":"dadosCambiaisCoberturaCambialCodigo","default":"1"},
+    {"tag":"dadosCambiaisCoberturaCambialNome","default":"COM COBERTURA CAMBIAL E PAGAMENTO FINAL A PRAZO DE ATE' 180"},
+    {"tag":"dadosCambiaisInstituicaoFinanciadoraCodigo","default":"00"},
+    {"tag":"dadosCambiaisInstituicaoFinanciadoraNome","default":"N/I"},
+    {"tag":"dadosCambiaisMotivoSemCoberturaCodigo","default":"00"},
+    {"tag":"dadosCambiaisMotivoSemCoberturaNome","default":"N/I"},
+    {"tag":"dadosCambiaisValorRealCambio","default":"000000000000000"},
+    {"tag":"dadosCargaPaisProcedenciaCodigo","default":"000"},
+    {"tag":"dadosCargaUrfEntradaCodigo","default":"0000000"},
+    {"tag":"dadosCargaViaTransporteCodigo","default":"01"},
+    {"tag":"dadosCargaViaTransporteNome","default":"MARÍTIMA"},
+    {"tag":"dadosMercadoriaAplicacao","default":"REVENDA"},
+    {"tag":"dadosMercadoriaCodigoNaladiNCCA","default":"0000000"},
+    {"tag":"dadosMercadoriaCodigoNaladiSH","default":"00000000"},
+    {"tag":"dadosMercadoriaCodigoNcm","default":"00000000"},
+    {"tag":"dadosMercadoriaCondicao","default":"NOVA"},
+    {"tag":"dadosMercadoriaDescricaoTipoCertificado","default":"Sem Certificado"},
+    {"tag":"dadosMercadoriaIndicadorTipoCertificado","default":"1"},
+    {"tag":"dadosMercadoriaMedidaEstatisticaQuantidade","default":"00000000000000"},
+    {"tag":"dadosMercadoriaMedidaEstatisticaUnidade","default":"UNIDADE"},
+    {"tag":"dadosMercadoriaNomeNcm","default":"DESCRIÇÃO PADRÃO NCM"},
+    {"tag":"dadosMercadoriaPesoLiquido","default":"000000000000000"},
+    {"tag":"dcrCoeficienteReducao","default":"00000"},
+    {"tag":"dcrIdentificacao","default":"00000000"},
+    {"tag":"dcrValorDevido","default":"000000000000000"},
+    {"tag":"dcrValorDolar","default":"000000000000000"},
+    {"tag":"dcrValorReal","default":"000000000000000"},
+    {"tag":"dcrValorRecolher","default":"000000000000000"},
+    {"tag":"fornecedorCidade","default":""},
+    {"tag":"fornecedorLogradouro","default":""},
+    {"tag":"fornecedorNome","default":""},
+    {"tag":"fornecedorNumero","default":""},
+    {"tag":"freteMoedaNegociadaCodigo","default":"978"},
+    {"tag":"freteMoedaNegociadaNome","default":"EURO/COM.EUROPEIA"},
+    {"tag":"freteValorMoedaNegociada","default":"000000000000000"},
+    {"tag":"freteValorReais","default":"000000000000000"},
+    {"tag":"iiAcordoTarifarioTipoCodigo","default":"0"},
+    {"tag":"iiAliquotaAcordo","default":"00000"},
+    {"tag":"iiAliquotaAdValorem","default":"00000"},
+    {"tag":"iiAliquotaPercentualReducao","default":"00000"},
+    {"tag":"iiAliquotaReduzida","default":"00000"},
+    {"tag":"iiAliquotaValorCalculado","default":"000000000000000"},
+    {"tag":"iiAliquotaValorDevido","default":"000000000000000"},
+    {"tag":"iiAliquotaValorRecolher","default":"000000000000000"},
+    {"tag":"iiAliquotaValorReduzido","default":"000000000000000"},
+    {"tag":"iiBaseCalculo","default":"000000000000000"},
+    {"tag":"iiFundamentoLegalCodigo","default":"00"},
+    {"tag":"iiMotivoAdmissaoTemporariaCodigo","default":"00"},
+    {"tag":"iiRegimeTributacaoCodigo","default":"1"},
+    {"tag":"iiRegimeTributacaoNome","default":"RECOLHIMENTO INTEGRAL"},
+    {"tag":"ipiAliquotaAdValorem","default":"00000"},
+    {"tag":"ipiAliquotaEspecificaCapacidadeRecipciente","default":"00000"},
+    {"tag":"ipiAliquotaEspecificaQuantidadeUnidadeMedida","default":"000000000"},
+    {"tag":"ipiAliquotaEspecificaTipoRecipienteCodigo","default":"00"},
+    {"tag":"ipiAliquotaEspecificaValorUnidadeMedida","default":"0000000000"},
+    {"tag":"ipiAliquotaNotaComplementarTIPI","default":"00"},
+    {"tag":"ipiAliquotaReduzida","default":"00000"},
+    {"tag":"ipiAliquotaValorDevido","default":"000000000000000"},
+    {"tag":"ipiAliquotaValorRecolher","default":"000000000000000"},
+    {"tag":"ipiRegimeTributacaoCodigo","default":"4"},
+    {"tag":"ipiRegimeTributacaoNome","default":"SEM BENEFICIO"},
+    {"tag":"mercadoria","type":"complex","children":[
+        {"tag":"descricaoMercadoria","default":""},
+        {"tag":"numeroSequencialItem","default":"01"},
+        {"tag":"quantidade","default":"00000000000000"},
+        {"tag":"unidadeMedida","default":"UNIDADE"},
+        {"tag":"valorUnitario","default":"00000000000000000000"},
+    ]},
+    {"tag":"numeroAdicao","default":"001"},
+    {"tag":"numeroDUIMP","default":""},
+    {"tag":"numeroLI","default":"0000000000"},
+    {"tag":"paisAquisicaoMercadoriaCodigo","default":"000"},
+    {"tag":"paisAquisicaoMercadoriaNome","default":""},
+    {"tag":"paisOrigemMercadoriaCodigo","default":"000"},
+    {"tag":"paisOrigemMercadoriaNome","default":""},
+    {"tag":"pisCofinsBaseCalculoAliquotaICMS","default":"00000"},
+    {"tag":"pisCofinsBaseCalculoFundamentoLegalCodigo","default":"00"},
+    {"tag":"pisCofinsBaseCalculoPercentualReducao","default":"00000"},
+    {"tag":"pisCofinsBaseCalculoValor","default":"000000000000000"},
+    {"tag":"pisCofinsFundamentoLegalReducaoCodigo","default":"00"},
+    {"tag":"pisCofinsRegimeTributacaoCodigo","default":"1"},
+    {"tag":"pisCofinsRegimeTributacaoNome","default":"RECOLHIMENTO INTEGRAL"},
+    {"tag":"pisPasepAliquotaAdValorem","default":"00000"},
+    {"tag":"pisPasepAliquotaEspecificaQuantidadeUnidade","default":"000000000"},
+    {"tag":"pisPasepAliquotaEspecificaValor","default":"0000000000"},
+    {"tag":"pisPasepAliquotaReduzida","default":"00000"},
+    {"tag":"pisPasepAliquotaValorDevido","default":"000000000000000"},
+    {"tag":"pisPasepAliquotaValorRecolher","default":"000000000000000"},
+    {"tag":"icmsBaseCalculoValor","default":"000000000000000"},
+    {"tag":"icmsBaseCalculoAliquota","default":"00000"},
+    {"tag":"icmsBaseCalculoValorImposto","default":"00000000000000"},
+    {"tag":"icmsBaseCalculoValorDiferido","default":"00000000000000"},
+    {"tag":"cbsIbsCst","default":"000"},
+    {"tag":"cbsIbsClasstrib","default":"000001"},
+    {"tag":"cbsBaseCalculoValor","default":"000000000000000"},
+    {"tag":"cbsBaseCalculoAliquota","default":"00000"},
+    {"tag":"cbsBaseCalculoAliquotaReducao","default":"00000"},
+    {"tag":"cbsBaseCalculoValorImposto","default":"00000000000000"},
+    {"tag":"ibsBaseCalculoValor","default":"000000000000000"},
+    {"tag":"ibsBaseCalculoAliquota","default":"00000"},
+    {"tag":"ibsBaseCalculoAliquotaReducao","default":"00000"},
+    {"tag":"ibsBaseCalculoValorImposto","default":"00000000000000"},
+    {"tag":"relacaoCompradorVendedor","default":"Fabricante é desconhecido"},
+    {"tag":"seguroMoedaNegociadaCodigo","default":"220"},
+    {"tag":"seguroMoedaNegociadaNome","default":"DOLAR DOS EUA"},
+    {"tag":"seguroValorMoedaNegociada","default":"000000000000000"},
+    {"tag":"seguroValorReais","default":"000000000000000"},
+    {"tag":"sequencialRetificacao","default":"00"},
+    {"tag":"valorMultaARecolher","default":"000000000000000"},
+    {"tag":"valorMultaARecolherAjustado","default":"000000000000000"},
+    {"tag":"valorReaisFreteInternacional","default":"000000000000000"},
+    {"tag":"valorReaisSeguroInternacional","default":"000000000000000"},
+    {"tag":"valorTotalCondicaoVenda","default":"00000000000"},
+    {"tag":"vinculoCompradorVendedor","default":"Não há vinculação entre comprador e vendedor."},
+]
+
+FOOTER_TAGS = {
+    "armazem":{"tag":"nomeArmazem","default":"TCP"},
+    "armazenamentoRecintoAduaneiroCodigo":"9801303",
+    "armazenamentoRecintoAduaneiroNome":"TCP - TERMINAL",
+    "armazenamentoSetor":"002",
+    "canalSelecaoParametrizada":"001",
+    "caracterizacaoOperacaoCodigoTipo":"1",
+    "caracterizacaoOperacaoDescricaoTipo":"Importação Própria",
+    "cargaDataChegada":"20251120",
+    "cargaNumeroAgente":"N/I",
+    "cargaPaisProcedenciaCodigo":"386",
+    "cargaPaisProcedenciaNome":"",
+    "cargaPesoBruto":"000000000000000",
+    "cargaPesoLiquido":"000000000000000",
+    "cargaUrfEntradaCodigo":"0917800",
+    "cargaUrfEntradaNome":"PORTO DE PARANAGUA",
+    "conhecimentoCargaEmbarqueData":"20251025",
+    "conhecimentoCargaEmbarqueLocal":"EXTERIOR",
+    "conhecimentoCargaId":"CE123456",
+    "conhecimentoCargaIdMaster":"CE123456",
+    "conhecimentoCargaTipoCodigo":"12",
+    "conhecimentoCargaTipoNome":"HBL - House Bill of Lading",
+    "conhecimentoCargaUtilizacao":"1",
+    "conhecimentoCargaUtilizacaoNome":"Total",
+    "dataDesembaraco":"20251124",
+    "dataRegistro":"20251124",
+    "documentoChegadaCargaCodigoTipo":"1",
+    "documentoChegadaCargaNome":"Manifesto da Carga",
+    "documentoChegadaCargaNumero":"1625502058594",
+    "embalagem":[{"tag":"codigoTipoEmbalagem","default":"60"},
+                 {"tag":"nomeEmbalagem","default":"PALLETS"},
+                 {"tag":"quantidadeVolume","default":"00001"}],
+    "freteCollect":"000000000000000",
+    "freteEmTerritorioNacional":"000000000000000",
+    "freteMoedaNegociadaCodigo":"978",
+    "freteMoedaNegociadaNome":"EURO/COM.EUROPEIA",
+    "fretePrepaid":"000000000000000",
+    "freteTotalDolares":"000000000000000",
+    "freteTotalMoeda":"000000000000000",
+    "freteTotalReais":"000000000000000",
+    "icms":[{"tag":"agenciaIcms","default":"00000"},
+            {"tag":"codigoTipoRecolhimentoIcms","default":"3"},
+            {"tag":"nomeTipoRecolhimentoIcms","default":"Exoneração do ICMS"},
+            {"tag":"numeroSequencialIcms","default":"001"},
+            {"tag":"ufIcms","default":"PR"},
+            {"tag":"valorTotalIcms","default":"000000000000000"}],
+    "importadorCodigoTipo":"1",
+    "importadorCpfRepresentanteLegal":"00000000000",
+    "importadorEnderecoBairro":"CENTRO",
+    "importadorEnderecoCep":"00000000",
+    "importadorEnderecoComplemento":"",
+    "importadorEnderecoLogradouro":"RUA PRINCIPAL",
+    "importadorEnderecoMunicipio":"CIDADE",
+    "importadorEnderecoNumero":"00",
+    "importadorEnderecoUf":"PR",
+    "importadorNome":"",
+    "importadorNomeRepresentanteLegal":"REPRESENTANTE",
+    "importadorNumero":"",
+    "importadorNumeroTelefone":"0000000000",
+    "informacaoComplementar":"Informações extraídas do Sistema Integrado DUIMP 2026.",
+    "localDescargaTotalDolares":"000000000000000",
+    "localDescargaTotalReais":"000000000000000",
+    "localEmbarqueTotalDolares":"000000000000000",
+    "localEmbarqueTotalReais":"000000000000000",
+    "modalidadeDespachoCodigo":"1",
+    "modalidadeDespachoNome":"Normal",
+    "numeroDUIMP":"",
+    "operacaoFundap":"N",
+    "pagamento":[],
+    "seguroMoedaNegociadaCodigo":"220",
+    "seguroMoedaNegociadaNome":"DOLAR DOS EUA",
+    "seguroTotalDolares":"000000000000000",
+    "seguroTotalMoedaNegociada":"000000000000000",
+    "seguroTotalReais":"000000000000000",
+    "sequencialRetificacao":"00",
+    "situacaoEntregaCarga":"ENTREGA CONDICIONADA",
+    "tipoDeclaracaoCodigo":"01",
+    "tipoDeclaracaoNome":"CONSUMO",
+    "totalAdicoes":"000",
+    "urfDespachoCodigo":"0917800",
+    "urfDespachoNome":"PORTO DE PARANAGUA",
+    "valorTotalMultaARecolherAjustado":"000000000000000",
+    "viaTransporteCodigo":"01",
+    "viaTransporteMultimodal":"N",
+    "viaTransporteNome":"MARÍTIMA",
+    "viaTransporteNomeTransportador":"MAERSK A/S",
+    "viaTransporteNomeVeiculo":"MAERSK",
+    "viaTransportePaisTransportadorCodigo":"741",
+    "viaTransportePaisTransportadorNome":"CINGAPURA",
+}
+
+
+class DataFormatter:
+    @staticmethod
+    def clean_text(text):
+        if not text: return ""
+        return re.sub(r'\s+', ' ', text.replace('\n',' ').replace('\r','')).strip()
+
+    @staticmethod
+    def format_number(value, length=15):
+        if not value: return "0"*length
+        clean = re.sub(r'\D','',str(value))
+        return clean.zfill(length) if clean else "0"*length
+
+    @staticmethod
+    def format_ncm(value):
+        if not value: return "00000000"
+        return re.sub(r'\D','',value)[:8]
+
+    @staticmethod
+    def format_input_fiscal(value, length=15, is_percent=False):
+        try:
+            if isinstance(value, str):
+                value = value.replace('.','').replace(',','.')
+            return str(int(round(float(value)*100))).zfill(length)
+        except Exception:
+            return "0"*length
+
+    @staticmethod
+    def format_high_precision(value, length=15):
+        try:
+            if isinstance(value, str):
+                value = value.replace('.','').replace(',','.')
+            return str(int(round(float(value)*10000000))).zfill(length)
+        except Exception:
+            return "0"*length
+
+    @staticmethod
+    def format_quantity(value, length=14):
+        try:
+            if isinstance(value, str):
+                value = value.replace('.','').replace(',','.')
+            return str(int(round(float(value)*100000))).zfill(length)
+        except Exception:
+            return "0"*length
+
+    @staticmethod
+    def calculate_cbs_ibs(base_xml_string):
+        try:
+            bf = int(base_xml_string)/100.0
+            cbs = str(int(round(bf*0.009*100))).zfill(14)
+            ibs = str(int(round(bf*0.001*100))).zfill(14)
+            return cbs, ibs
+        except Exception:
+            return "0".zfill(14), "0".zfill(14)
+
+    @staticmethod
+    def parse_supplier_info(raw_name, raw_addr):
+        data = {"fornecedorNome":"","fornecedorLogradouro":"","fornecedorNumero":"S/N","fornecedorCidade":""}
+        if raw_name:
+            parts = raw_name.split('-',1)
+            data["fornecedorNome"] = parts[-1].strip() if len(parts)>1 else raw_name.strip()
+        if raw_addr:
+            ca = DataFormatter.clean_text(raw_addr)
+            pd_ = ca.rsplit('-',1)
+            if len(pd_)>1:
+                data["fornecedorCidade"] = pd_[1].strip()
+                street = pd_[0].strip()
+            else:
+                data["fornecedorCidade"] = "EXTERIOR"
+                street = ca
+            cs = street.rsplit(',',1)
+            if len(cs)>1:
+                data["fornecedorLogradouro"] = cs[0].strip()
+                m = re.search(r'\d+', cs[1])
+                if m: data["fornecedorNumero"] = m.group(0)
+            else:
+                data["fornecedorLogradouro"] = street
+        return data
+
+
+class XMLBuilder:
+    def __init__(self, parser, edited_items=None):
+        self.p = parser
+        self.items_to_use = edited_items if edited_items else self.p.items
+        self.root = etree.Element("ListaDeclaracoes")
+        self.duimp = etree.SubElement(self.root, "duimp")
+
+    def build(self, user_inputs=None):
+        h = self.p.header
+        duimp_fmt = h.get("numeroDUIMP","").split("/")[0].replace("-","").replace(".","")
+        totals = {"frete":0.0,"seguro":0.0,"ii":0.0,"ipi":0.0,"pis":0.0,"cofins":0.0}
+
+        def gf(val):
+            try:
+                if isinstance(val,str): val=val.replace('.','').replace(',','.')
+                return float(val)
+            except Exception:
+                return 0.0
+
+        for it in self.items_to_use:
+            totals["frete"] += gf(it.get("Frete (R$)"))
+            totals["seguro"] += gf(it.get("Seguro (R$)"))
+            totals["ii"] += gf(it.get("II (R$)"))
+            totals["ipi"] += gf(it.get("IPI (R$)"))
+            totals["pis"] += gf(it.get("PIS (R$)"))
+            totals["cofins"] += gf(it.get("COFINS (R$)"))
+
+        for it in self.items_to_use:
+            adicao = etree.SubElement(self.duimp, "adicao")
+            input_number = str(it.get("NUMBER","")).strip()
+            original_desc = DataFormatter.clean_text(it.get("descricao",""))
+            desc_compl = DataFormatter.clean_text(it.get("desc_complementar",""))
+            final_desc = montar_descricao_final(desc_compl, input_number, original_desc)
+            vtvf = DataFormatter.format_high_precision(it.get("valorTotal","0"), 11)
+            vuf = DataFormatter.format_high_precision(it.get("valorUnit","0"), 20)
+            qcr = it.get("quantidade_comercial") or it.get("quantidade")
+            qcf = DataFormatter.format_quantity(qcr, 14)
+            qef = DataFormatter.format_quantity(it.get("quantidade"), 14)
+            plf = DataFormatter.format_quantity(it.get("pesoLiq"), 15)
+            btrf = DataFormatter.format_input_fiscal(it.get("valorTotal","0"), 15)
+            rf = gf(it.get("Frete (R$)",0))
+            rs = gf(it.get("Seguro (R$)",0))
+            ra = gf(it.get("Aduaneiro (R$)",0))
+            ff = DataFormatter.format_input_fiscal(rf)
+            sf = DataFormatter.format_input_fiscal(rs)
+            af = DataFormatter.format_input_fiscal(ra)
+            iibf = DataFormatter.format_input_fiscal(it.get("II Base (R$)",0))
+            iiaf = DataFormatter.format_input_fiscal(it.get("II Alíq. (%)",0),5,True)
+            iivf = DataFormatter.format_input_fiscal(gf(it.get("II (R$)",0)))
+            ipiaf = DataFormatter.format_input_fiscal(it.get("IPI Alíq. (%)",0),5,True)
+            ipivf = DataFormatter.format_input_fiscal(gf(it.get("IPI (R$)",0)))
+            pisbf = DataFormatter.format_input_fiscal(it.get("PIS Base (R$)",0))
+            pisaf = DataFormatter.format_input_fiscal(it.get("PIS Alíq. (%)",0),5,True)
+            pisvf = DataFormatter.format_input_fiscal(gf(it.get("PIS (R$)",0)))
+            cofaf = DataFormatter.format_input_fiscal(it.get("COFINS Alíq. (%)",0),5,True)
+            cofvf = DataFormatter.format_input_fiscal(gf(it.get("COFINS (R$)",0)))
+            icms_base = iibf if int(iibf)>0 else btrf
+            cbs_imp, ibs_imp = DataFormatter.calculate_cbs_ibs(icms_base)
+            sup = DataFormatter.parse_supplier_info(it.get("fornecedor_raw"), it.get("endereco_raw"))
+            emap = {
+                "numeroAdicao":str(it["numeroAdicao"])[-3:],
+                "numeroDUIMP":duimp_fmt,
+                "dadosMercadoriaCodigoNcm":DataFormatter.format_ncm(it.get("ncm")),
+                "dadosMercadoriaMedidaEstatisticaQuantidade":qef,
+                "dadosMercadoriaMedidaEstatisticaUnidade":it.get("unidade","").upper(),
+                "dadosMercadoriaPesoLiquido":plf,
+                "condicaoVendaMoedaNome":it.get("moeda","").upper(),
+                "valorTotalCondicaoVenda":vtvf,
+                "valorUnitario":vuf,
+                "condicaoVendaValorMoeda":btrf,
+                "condicaoVendaValorReais":af if int(af)>0 else btrf,
+                "paisOrigemMercadoriaNome":it.get("paisOrigem","").upper(),
+                "paisAquisicaoMercadoriaNome":it.get("paisOrigem","").upper(),
+                "descricaoMercadoria":final_desc,
+                "quantidade":qcf,
+                "unidadeMedida":it.get("unidade","").upper(),
+                "dadosCargaUrfEntradaCodigo":h.get("urf","0917800"),
+                "fornecedorNome":sup["fornecedorNome"][:60],
+                "fornecedorLogradouro":sup["fornecedorLogradouro"][:60],
+                "fornecedorNumero":sup["fornecedorNumero"][:10],
+                "fornecedorCidade":sup["fornecedorCidade"][:30],
+                "freteValorReais":ff,"seguroValorReais":sf,
+                "iiBaseCalculo":iibf,"iiAliquotaAdValorem":iiaf,
+                "iiAliquotaValorCalculado":iivf,"iiAliquotaValorDevido":iivf,"iiAliquotaValorRecolher":iivf,
+                "ipiAliquotaAdValorem":ipiaf,"ipiAliquotaValorDevido":ipivf,"ipiAliquotaValorRecolher":ipivf,
+                "pisCofinsBaseCalculoValor":pisbf,"pisPasepAliquotaAdValorem":pisaf,
+                "pisPasepAliquotaValorDevido":pisvf,"pisPasepAliquotaValorRecolher":pisvf,
+                "cofinsAliquotaAdValorem":cofaf,"cofinsAliquotaValorDevido":cofvf,"cofinsAliquotaValorRecolher":cofvf,
+                "icmsBaseCalculoValor":icms_base,"icmsBaseCalculoAliquota":"01800",
+                "cbsIbsClasstrib":"000001","cbsBaseCalculoValor":icms_base,
+                "cbsBaseCalculoAliquota":"00090","cbsBaseCalculoValorImposto":cbs_imp,
+                "ibsBaseCalculoValor":icms_base,"ibsBaseCalculoAliquota":"00010","ibsBaseCalculoValorImposto":ibs_imp,
+            }
+            for field in ADICAO_FIELDS_ORDER:
+                tag = field["tag"]
+                if field.get("type") == "complex":
+                    parent = etree.SubElement(adicao, tag)
+                    for child in field["children"]:
+                        etree.SubElement(parent, child["tag"]).text = emap.get(child["tag"], child["default"])
+                else:
+                    etree.SubElement(adicao, tag).text = emap.get(tag, field["default"])
+
+        pbf = DataFormatter.format_quantity(h.get("pesoBruto"), 15)
+        plf2 = DataFormatter.format_quantity(h.get("pesoLiquido"), 15)
+        fmap = {
+            "numeroDUIMP":duimp_fmt,
+            "importadorNome":h.get("nomeImportador",""),
+            "importadorNumero":DataFormatter.format_number(h.get("cnpj"),14),
+            "cargaPesoBruto":pbf,"cargaPesoLiquido":plf2,
+            "cargaPaisProcedenciaNome":h.get("paisProcedencia","").upper(),
+            "totalAdicoes":str(len(self.items_to_use)).zfill(3),
+            "freteTotalReais":DataFormatter.format_input_fiscal(totals["frete"]),
+            "seguroTotalReais":DataFormatter.format_input_fiscal(totals["seguro"]),
+        }
+        if user_inputs:
+            for k in ["cargaDataChegada","dataDesembaraco","dataRegistro","conhecimentoCargaEmbarqueData",
+                      "cargaPesoBruto","cargaPesoLiquido","localDescargaTotalDolares","localDescargaTotalReais",
+                      "localEmbarqueTotalDolares","localEmbarqueTotalReais"]:
+                if k in user_inputs: fmap[k] = user_inputs[k]
+
+        receitas = [
+            {"code":"0086","val":totals["ii"]},
+            {"code":"1038","val":totals["ipi"]},
+            {"code":"5602","val":totals["pis"]},
+            {"code":"5629","val":totals["cofins"]},
+        ]
+        if user_inputs and user_inputs.get("valorReceita7811","0") not in ("0","000000000000000"):
+            receitas.append({"code":"7811","val":float(user_inputs["valorReceita7811"])})
+
+        for tag, dval in FOOTER_TAGS.items():
+            if tag == "embalagem" and user_inputs:
+                parent = etree.SubElement(self.duimp, tag)
+                for sf in dval:
+                    v = (user_inputs.get("quantidadeVolume", sf["default"])
+                         if sf["tag"] == "quantidadeVolume" else sf["default"])
+                    etree.SubElement(parent, sf["tag"]).text = v
+                continue
+            if tag == "pagamento":
+                agencia = user_inputs.get("agenciaPagamento","3715") if user_inputs else "3715"
+                banco = user_inputs.get("bancoPagamento","341") if user_inputs else "341"
+                for rec in receitas:
+                    if rec["val"] > 0:
+                        pag = etree.SubElement(self.duimp, "pagamento")
+                        etree.SubElement(pag, "agenciaPagamento").text = agencia
+                        etree.SubElement(pag, "bancoPagamento").text = banco
+                        etree.SubElement(pag, "codigoReceita").text = rec["code"]
+                        if rec["code"]=="7811" and user_inputs:
+                            etree.SubElement(pag, "valorReceita").text = user_inputs["valorReceita7811"].zfill(15)
+                        else:
+                            etree.SubElement(pag, "valorReceita").text = DataFormatter.format_input_fiscal(rec["val"])
+                continue
+            if tag in fmap:
+                etree.SubElement(self.duimp, tag).text = fmap[tag]
+                continue
+            if user_inputs and tag in user_inputs:
+                etree.SubElement(self.duimp, tag).text = user_inputs[tag]
+                continue
+            if isinstance(dval, list):
+                parent = etree.SubElement(self.duimp, tag)
+                for sf in dval:
+                    etree.SubElement(parent, sf["tag"]).text = sf["default"]
+            elif isinstance(dval, dict):
+                parent = etree.SubElement(self.duimp, tag)
+                etree.SubElement(parent, dval["tag"]).text = dval["default"]
+            else:
+                etree.SubElement(self.duimp, tag).text = fmap.get(tag, dval)
+
+        xml_bytes = etree.tostring(self.root, pretty_print=True, encoding="UTF-8", xml_declaration=False)
+        return b'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n' + xml_bytes
+
+
+def _merge_app2_items(df_dest: pd.DataFrame, itens: list) -> tuple:
+    src_map: Dict[int, Dict] = {}
+    for item in itens:
+        try:
+            src_map[int(item['numero_item'])] = item
+        except Exception:
+            pass
+
+    count, not_found = 0, []
+    for idx, row in df_dest.iterrows():
+        try:
+            num = int(str(row['numeroAdicao']).strip())
+            if num not in src_map:
+                not_found.append(num)
+                continue
+            src = src_map[num]
+            df_dest.at[idx,'NUMBER'] = src.get('codigo_interno','')
+            df_dest.at[idx,'Frete (R$)'] = src.get('frete_internacional',0.0)
+            df_dest.at[idx,'Seguro (R$)'] = src.get('seguro_internacional',0.0)
+            df_dest.at[idx,'Aduaneiro (R$)'] = src.get('aduaneiro_reais',
+                                                   src.get('valorAduaneiroReal',
+                                                   src.get('local_aduaneiro',0.0)))
+            df_dest.at[idx,'II (R$)'] = src.get('ii_valor_devido',0.0)
+            df_dest.at[idx,'II Base (R$)'] = src.get('ii_base_calculo',
+                                                   src.get('aduaneiro_reais',
+                                                   src.get('valorAduaneiroReal',0.0)))
+            df_dest.at[idx,'II Alíq. (%)'] = src.get('ii_aliquota',0.0)
+            df_dest.at[idx,'IPI (R$)'] = src.get('ipi_valor_devido',0.0)
+            df_dest.at[idx,'IPI Base (R$)'] = src.get('ipi_base_calculo',0.0)
+            df_dest.at[idx,'IPI Alíq. (%)'] = src.get('ipi_aliquota',0.0)
+            df_dest.at[idx,'PIS (R$)'] = src.get('pis_valor_devido',0.0)
+            df_dest.at[idx,'PIS Base (R$)'] = src.get('pis_base_calculo',0.0)
+            df_dest.at[idx,'PIS Alíq. (%)'] = src.get('pis_aliquota',0.0)
+            df_dest.at[idx,'COFINS (R$)'] = src.get('cofins_valor_devido',0.0)
+            df_dest.at[idx,'COFINS Base (R$)'] = src.get('cofins_base_calculo',0.0)
+            df_dest.at[idx,'COFINS Alíq. (%)'] = src.get('cofins_aliquota',0.0)
+            count += 1
+        except Exception:
+            continue
+    return df_dest, count, not_found
+
+
+def _render_totais_grade(df: pd.DataFrame):
+    def _s(col):
+        return pd.to_numeric(df[col], errors='coerce').sum() if col in df.columns else 0
+    t1,t2,t3,t4,t5,t6 = st.columns(6)
+    t1.metric("II Total", f"R$ {_s('II (R$)'):,.2f}")
+    t2.metric("IPI Total", f"R$ {_s('IPI (R$)'):,.2f}")
+    t3.metric("PIS Total", f"R$ {_s('PIS (R$)'):,.2f}")
+    t4.metric("COFINS Total", f"R$ {_s('COFINS (R$)'):,.2f}")
+    t5.metric("Frete Total", f"R$ {_s('Frete (R$)'):,.2f}")
+    t6.metric("Seguro Total", f"R$ {_s('Seguro (R$)'):,.2f}")
+
 
 def modulo_duimp():
+    botao_voltar()
+    
     ph("""
     <div class="ph-hdr">
         <span class="ph-icon">📦</span>
@@ -2001,28 +3463,429 @@ def modulo_duimp():
     </div>
     """)
 
-    st.info("""
-    📌 **Módulo DUIMP** — Para utilizar este módulo, certifique-se de ter os 
-    arquivos PDF do Extrato DUIMP e do Sigraweb (ou Extrato DUIMP APP2).
-    
-    O sistema irá:
-    1. Extrair os dados dos PDFs
-    2. Vincular automaticamente as informações
-    3. Permitir edição e conferência
-    4. Gerar XML no layout 8686
-    """)
+    tab_up, tab_conf, tab_xml = st.tabs([
+        "📂 Upload & Vinculação",
+        "📋 Conferência",
+        "💾 Exportar XML",
+    ])
 
-    # Placeholder para o módulo DUIMP completo
-    # O código completo do DUIMP está disponível na versão anterior
-    # Por questões de tamanho, estou mantendo esta versão resumida
-    
-    st.warning("""
-    ⚠️ **Módulo em desenvolvimento** — A implementação completa do DUIMP 
-    requer as classes HafelePDFParser, SigrawebPDFParser, DuimpPDFParser,
-    DataFormatter, XMLBuilder e todas as funções auxiliares.
-    
-    O código completo está disponível na versão anterior do sistema.
-    """)
+    with tab_up:
+        section_title("⚙️ Formato do Arquivo de Tributos (APP2)")
+        col_radio, col_badge = st.columns([3, 1], gap="large")
+
+        with col_radio:
+            layout_choice = st.radio(
+                "Selecione o layout do APP2",
+                options=[
+                    "🔵 Sigraweb — Conferência do Processo Detalhado (layout novo)",
+                    "🟠 Extrato DUIMP — Itens da DUIMP (layout antigo)",
+                ],
+                index=0 if st.session_state["layout_app2"] == "sigraweb" else 1,
+                key="layout_radio",
+                horizontal=False,
+            )
+            novo = "sigraweb" if layout_choice.startswith("🔵") else "extrato_duimp"
+            if novo != st.session_state["layout_app2"]:
+                st.session_state["layout_app2"] = novo
+                st.session_state["parsed_sigraweb"] = None
+                st.session_state["merged_df"] = None
+                st.rerun()
+
+        with col_badge:
+            is_sgw = st.session_state["layout_app2"] == "sigraweb"
+            bc = "lbadge" if is_sgw else "lbadge amber"
+            btx = "🔵 Sigraweb (ativo)" if is_sgw else "🟠 Extrato DUIMP (ativo)"
+            ph(f'<div class="{bc}">{btx}</div>')
+
+        st.divider()
+        section_title("📂 Carregar Arquivos")
+        c1, c2 = st.columns(2, gap="large")
+
+        with c1:
+            ph("""<div class="uzone">
+                <div class="uzone-icon">📄</div>
+                <div class="uzone-title">Passo 1 — Extrato DUIMP</div>
+                <div class="uzone-sub">Siscomex · PDF</div></div>""")
+            file_duimp = st.file_uploader("Arquivo DUIMP (PDF)", type="pdf", key="u1")
+
+        with c2:
+            lbl2 = "Sigraweb · Conferência Detalhada" if is_sgw else "Extrato DUIMP · Itens"
+            ph(f"""<div class="uzone">
+                <div class="uzone-icon">📑</div>
+                <div class="uzone-title">Passo 2 — {lbl2}</div>
+                <div class="uzone-sub">PDF</div></div>""")
+            key2 = "Arquivo Sigraweb (PDF)" if is_sgw else "Arquivo Extrato DUIMP (PDF)"
+            file_app2 = st.file_uploader(key2, type="pdf", key="u2")
+
+        if file_duimp:
+            if (st.session_state["parsed_duimp"] is None or
+                    file_duimp.name != getattr(st.session_state.get("last_duimp"), "name", "")):
+                _td_path = None
+                try:
+                    with tempfile.NamedTemporaryFile(delete=False, suffix='.pdf') as _td:
+                        _td.write(file_duimp.read())
+                        _td_path = _td.name
+                    p = DuimpPDFParser(_td_path)
+                    p.preprocess()
+                    st.session_state["parsed_duimp"] = p
+                    st.session_state["last_duimp"] = file_duimp
+                    df = pd.DataFrame(p.items)
+                    for col in ["NUMBER","Frete (R$)","Seguro (R$)",
+                                "II (R$)","II Base (R$)","II Alíq. (%)",
+                                "IPI (R$)","IPI Base (R$)","IPI Alíq. (%)",
+                                "PIS (R$)","PIS Base (R$)","PIS Alíq. (%)",
+                                "COFINS (R$)","COFINS Base (R$)","COFINS Alíq. (%)","Aduaneiro (R$)"]:
+                        df[col] = 0.00 if col != "NUMBER" else ""
+                    st.session_state["merged_df"] = df
+                    status_ok(f"DUIMP lida — {len(p.items)} adições encontradas.")
+                except Exception as e:
+                    st.error(f"Erro ao ler DUIMP: {e}")
+                finally:
+                    if _td_path and os.path.exists(_td_path):
+                        try:
+                            os.unlink(_td_path)
+                        except Exception:
+                            pass
+
+        if file_app2 and st.session_state["parsed_sigraweb"] is None:
+            with tempfile.NamedTemporaryFile(delete=False, suffix='.pdf') as tmp:
+                tmp.write(file_app2.getvalue())
+                tmp_path = tmp.name
+            try:
+                parser_a2 = SigrawebPDFParser() if is_sgw else HafelePDFParser()
+                doc_a2 = parser_a2.parse_pdf(tmp_path)
+                st.session_state["parsed_sigraweb"] = doc_a2
+                n = len(doc_a2['itens'])
+                if n > 0:
+                    lname = "Sigraweb" if is_sgw else "Extrato DUIMP"
+                    status_ok(f"{lname} lido — {n} itens encontrados.")
+                    if is_sgw:
+                        cab = doc_a2.get('cabecalho',{})
+                        tot = doc_a2.get('totais',{})
+                        with st.expander("📋 Resumo do Processo (Sigraweb)", expanded=True):
+                            r1,r2,r3,r4 = st.columns(4)
+                            r1.metric("Número DI", cab.get('numeroDI','N/A'))
+                            r2.metric("Adições", n)
+                            r3.metric("Peso Bruto (kg)", cab.get('pesoBruto','N/A'))
+                            r4.metric("Via Transporte", cab.get('viaTransporte','N/A'))
+                            m1,m2,m3,m4 = st.columns(4)
+                            m1.metric("II Total", f"R$ {tot.get('total_ii',0):,.2f}")
+                            m2.metric("IPI Total", f"R$ {tot.get('total_ipi',0):,.2f}")
+                            m3.metric("PIS Total", f"R$ {tot.get('total_pis',0):,.2f}")
+                            m4.metric("COFINS Total", f"R$ {tot.get('total_cofins',0):,.2f}")
+                            n1,n2,n3,n4 = st.columns(4)
+                            n1.metric("Vlr Adu. (R$)", f"R$ {tot.get('total_valor_aduaneiro',0):,.2f}")
+                            n2.metric("Frete (R$)", f"R$ {tot.get('total_frete',0):,.2f}")
+                            n3.metric("Seguro (R$)", f"R$ {tot.get('total_seguro',0):,.2f}")
+                            n4.metric("Peso Líq. (kg)", f"{tot.get('peso_liquido_total',0):,.2f}")
+                    else:
+                        tot = doc_a2.get('totais',{})
+                        with st.expander("📋 Resumo Extrato DUIMP", expanded=True):
+                            e1,e2,e3,e4 = st.columns(4)
+                            e1.metric("Itens", n)
+                            e2.metric("II Total", f"R$ {tot.get('total_ii',0):,.2f}")
+                            e3.metric("PIS Total", f"R$ {tot.get('total_pis',0):,.2f}")
+                            e4.metric("COFINS Total", f"R$ {tot.get('total_cofins',0):,.2f}")
+                else:
+                    st.warning("Nenhum item detectado. Verifique se o layout selecionado está correto.")
+            except Exception as e:
+                st.error(f"Erro ao ler APP2: {e}")
+                st.code(traceback.format_exc())
+            finally:
+                if os.path.exists(tmp_path):
+                    try:
+                        os.unlink(tmp_path)
+                    except Exception:
+                        pass
+
+        st.divider()
+        section_title("🔗 Ações")
+        col_btn, col_reset = st.columns([2, 1], gap="large")
+
+        with col_btn:
+            if st.button("🔗 VINCULAR DADOS (Cruzamento Automático)",
+                         type="primary", **_WS):
+                if (st.session_state["merged_df"] is not None and
+                        st.session_state["parsed_sigraweb"] is not None):
+                    try:
+                        doc_a2 = st.session_state["parsed_sigraweb"]
+                        df_dest = st.session_state["merged_df"].copy()
+                        df_dest, count, nf = _merge_app2_items(df_dest, doc_a2['itens'])
+                        st.session_state["merged_df"] = df_dest
+                        st.success(f"✅ **{count}** adições vinculadas.")
+                        if nf: st.warning(f"⚠️ {len(nf)} não encontradas: {nf}")
+                        with st.expander("📊 Resumo da Vinculação"):
+                            _render_totais_grade(df_dest)
+                    except Exception as e:
+                        st.error(f"Erro na vinculação: {e}")
+                        st.code(traceback.format_exc())
+                else:
+                    st.warning("Carregue os dois arquivos antes de vincular.")
+
+        with col_reset:
+            st.markdown('<div style="height:.05rem"></div>', unsafe_allow_html=True)
+            rc1, rc2 = st.columns(2)
+            with rc1:
+                if st.button("🔄 DUIMP", type="secondary", **_WS):
+                    st.session_state["parsed_duimp"] = None
+                    st.session_state["merged_df"] = None
+                    st.rerun()
+            with rc2:
+                if st.button("🔄 APP2", type="secondary", **_WS):
+                    st.session_state["parsed_sigraweb"] = None
+                    st.rerun()
+            if st.button("🗑️ Limpar Tudo", type="secondary", **_WS):
+                for k in ["parsed_duimp","parsed_sigraweb","merged_df","last_duimp"]:
+                    st.session_state[k] = None
+                st.rerun()
+
+    with tab_conf:
+        section_title("📋 Conferência e Edição")
+
+        doc_a2 = st.session_state.get("parsed_sigraweb")
+        if doc_a2:
+            itens_a2 = doc_a2.get('itens',[])
+
+            if st.session_state["layout_app2"] == "sigraweb":
+                cab = doc_a2.get('cabecalho',{})
+                with st.expander("📄 Dados do Processo — Sigraweb"):
+                    dados = {"Campo":["Número DI","SIGRAWEB ID","Empresa","CNPJ",
+                                      "URF Entrada","Via Transporte","País Procedência",
+                                      "Incoterms","IDT Conhecimento","IDT Master",
+                                      "Data Embarque","Data Chegada","Data Registro",
+                                      "Peso Bruto (kg)","Peso Líquido (kg)","Volumes",
+                                      "Embalagem","Banco","Agência","Taxa EUR","Taxa USD",
+                                      "FOB EUR","FOB BRL","Frete USD","Frete BRL",
+                                      "Seguro USD","Seguro BRL","CIF USD","CIF BRL",
+                                      "Vlr Aduaneiro USD","Vlr Aduaneiro BRL"],
+                             "Valor":[cab.get(k,'') for k in [
+                                 'numeroDI','sigraweb','nomeImportador','cnpj',
+                                 'urf','viaTransporte','paisProcedencia','incoterms',
+                                 'idtConhecimento','idtMaster','dataEmbarque','dataChegada',
+                                 'dataRegistro','pesoBruto','pesoLiquido','volumes',
+                                 'embalagem','banco','agencia','taxaEUR','taxaDolar',
+                                 'fobEUR','fobBRL','freteUSD','freteBRL',
+                                 'seguroUSD','seguroBRL','cifUSD','cifBRL',
+                                 'valorAduaneiroUSD','valorAduaneiroBRL']]}
+                    st.dataframe(pd.DataFrame(dados), **_WS, hide_index=True)
+
+            lbl_exp = "Sigraweb" if st.session_state["layout_app2"]=="sigraweb" else "Extrato DUIMP"
+            with st.expander(f"📑 Adições Extraídas — {lbl_exp}"):
+                if itens_a2:
+                    rows = [{
+                        'Adição': it.get('numeroAdicao',''),
+                        'Part Number': it.get('codigo_interno',''),
+                        'NCM': it.get('ncm',''),
+                        'Descrição': str(it.get('descricao',it.get('nome_produto','')))[:55],
+                        'País': it.get('paisOrigem',''),
+                        'Qtd Est.': it.get('quantidade',0),
+                        'Qtd Com.': it.get('quantidade_comercial',0),
+                        'Und': it.get('unidade',''),
+                        'Peso Líq.': it.get('pesoLiq',it.get('peso_liquido',0)),
+                        'Vlr Adu. BRL': it.get('aduaneiro_reais',it.get('valorAduaneiroReal',it.get('local_aduaneiro',0))),
+                        'Frete BRL': it.get('frete_internacional',0),
+                        'Seguro BRL': it.get('seguro_internacional',0),
+                        'II %': it.get('ii_aliquota',0),
+                        'II Base': it.get('ii_base_calculo',0),
+                        'II R$': it.get('ii_valor_devido',0),
+                        'IPI %': it.get('ipi_aliquota',0),
+                        'IPI R$': it.get('ipi_valor_devido',0),
+                        'PIS %': it.get('pis_aliquota',0),
+                        'PIS R$': it.get('pis_valor_devido',0),
+                        'COFINS %': it.get('cofins_aliquota',0),
+                        'COFINS R$': it.get('cofins_valor_devido',0),
+                        'Total Imp.': it.get('total_impostos',0),
+                    } for it in itens_a2]
+                    dfa2 = pd.DataFrame(rows)
+                    st.dataframe(dfa2, **_WS, height=340)
+                    tt1,tt2,tt3,tt4,tt5 = st.columns(5)
+                    tt1.metric("Vlr Adu. Total",f"R$ {dfa2['Vlr Adu. BRL'].sum():,.2f}")
+                    tt2.metric("II Total", f"R$ {dfa2['II R$'].sum():,.2f}")
+                    tt3.metric("IPI Total", f"R$ {dfa2['IPI R$'].sum():,.2f}")
+                    tt4.metric("PIS Total", f"R$ {dfa2['PIS R$'].sum():,.2f}")
+                    tt5.metric("COFINS Total", f"R$ {dfa2['COFINS R$'].sum():,.2f}")
+                else:
+                    st.info("Nenhum item extraído.")
+
+        if st.session_state["merged_df"] is not None:
+            section_title("✏️ Grade de Edição — DUIMP + APP2")
+            ccfg = {
+                "numeroAdicao": st.column_config.TextColumn("Item", width="small", disabled=True),
+                "NUMBER": st.column_config.TextColumn("Part Number", width="medium"),
+                "ncm": st.column_config.TextColumn("NCM", width="small", disabled=True),
+                "descricao": st.column_config.TextColumn("Descrição", width="large", disabled=True),
+                "quantidade": st.column_config.TextColumn("Qtd Est.", disabled=True),
+                "quantidade_comercial": st.column_config.TextColumn("Qtd Com.", disabled=True),
+                "unidade": st.column_config.TextColumn("Unidade", disabled=True),
+                "pesoLiq": st.column_config.TextColumn("Peso Líq.", disabled=True),
+                "valorTotal": st.column_config.TextColumn("FOB", disabled=True),
+                "Frete (R$)": st.column_config.NumberColumn(format="R$ %.2f"),
+                "Seguro (R$)": st.column_config.NumberColumn(format="R$ %.2f"),
+                "Aduaneiro (R$)": st.column_config.NumberColumn("Vlr Adu.", format="R$ %.2f"),
+                "II Base (R$)": st.column_config.NumberColumn("II Base", format="R$ %.2f"),
+                "II Alíq. (%)": st.column_config.NumberColumn("II %", format="%.4f"),
+                "II (R$)": st.column_config.NumberColumn("II R$", format="R$ %.2f"),
+                "IPI Base (R$)": st.column_config.NumberColumn("IPI Base", format="R$ %.2f"),
+                "IPI Alíq. (%)": st.column_config.NumberColumn("IPI %", format="%.4f"),
+                "IPI (R$)": st.column_config.NumberColumn("IPI R$", format="R$ %.2f"),
+                "PIS Base (R$)": st.column_config.NumberColumn("PIS Base", format="R$ %.2f"),
+                "PIS Alíq. (%)": st.column_config.NumberColumn("PIS %", format="%.4f"),
+                "PIS (R$)": st.column_config.NumberColumn("PIS R$", format="R$ %.2f"),
+                "COFINS Base (R$)": st.column_config.NumberColumn("COF Base", format="R$ %.2f"),
+                "COFINS Alíq. (%)": st.column_config.NumberColumn("COF %", format="%.4f"),
+                "COFINS (R$)": st.column_config.NumberColumn("COF R$", format="R$ %.2f"),
+            }
+            edf = st.data_editor(
+                st.session_state["merged_df"],
+                hide_index=True, column_config=ccfg,
+                **_WS, height=540,
+            )
+            for tax in ['II','IPI','PIS','COFINS']:
+                bc_ = f"{tax} Base (R$)"; ac_ = f"{tax} Alíq. (%)"; vc_ = f"{tax} (R$)"
+                if bc_ in edf.columns and ac_ in edf.columns:
+                    edf[bc_] = pd.to_numeric(edf[bc_], errors='coerce').fillna(0.0)
+                    edf[ac_] = pd.to_numeric(edf[ac_], errors='coerce').fillna(0.0)
+                    edf[vc_] = edf[bc_] * (edf[ac_] / 100.0)
+            st.session_state["merged_df"] = edf
+            section_title("📊 Totais da Grade")
+            _render_totais_grade(edf)
+        else:
+            empty_state("📋", "Nenhum dado vinculado ainda",
+                        "Carregue os arquivos e execute a vinculação na aba Upload")
+
+    with tab_xml:
+        section_title("⚙️ Configurações do XML Final (Layout 8686)")
+
+        cab_sgw = {}
+        if (st.session_state.get("parsed_sigraweb") and
+                st.session_state["layout_app2"] == "sigraweb"):
+            cab_sgw = st.session_state["parsed_sigraweb"].get("cabecalho",{})
+
+        def _get_extracted_value(cab, key, default='000000000000000'):
+            val = cab.get(key, '0')
+            if val and val != '0' and val != '000000000000000':
+                if len(str(val)) == 15 and str(val).isdigit():
+                    return str(val)
+                clean = re.sub(r'\D', '', str(val))
+                return clean.zfill(15) if clean else default
+            return default
+
+        fob_usd_auto = _get_extracted_value(cab_sgw, 'fobUSD')
+        fob_brl_auto = _get_extracted_value(cab_sgw, 'fobBRL')
+        adu_usd_auto = _get_extracted_value(cab_sgw, 'valorAduaneiroUSD')
+        adu_brl_auto = _get_extracted_value(cab_sgw, 'valorAduaneiroBRL')
+        siscomex_auto = _get_extracted_value(cab_sgw, 'siscomex')
+
+        has_auto_values = (
+            fob_usd_auto != '000000000000000' or
+            fob_brl_auto != '000000000000000' or
+            adu_usd_auto != '000000000000000' or
+            adu_brl_auto != '000000000000000' or
+            siscomex_auto != '000000000000000'
+        )
+
+        if has_auto_values:
+            ph("""
+            <div class="sbox sbox-ok" style="margin-bottom:1rem;">
+                ✅ Valores extraídos automaticamente do PDF Sigraweb
+                <span style="font-size:0.75rem;font-weight:400;margin-left:0.5rem;">
+                    (FOB, Valor Aduaneiro e Siscomex)
+                </span>
+            </div>
+            """)
+
+        with st.expander("📅 Datas, Pesos e Locais", expanded=True):
+            xc1, xc2, xc3 = st.columns(3, gap="large")
+            with xc1:
+                st.markdown("**Quantidade & Datas**")
+                _v = cab_sgw.get('volumes','')
+                inp_vol = st.text_input("Qtd. Volume", value=str(_v).zfill(5) if _v else '00001')
+                inp_cheg = st.text_input("Data Chegada", value=cab_sgw.get('dataChegadaISO','20251120') or '20251120')
+                inp_desemb = st.text_input("Data Desembaraço", value=cab_sgw.get('dataRegistro','20251124') or '20251124')
+                inp_reg = st.text_input("Data Registro", value=cab_sgw.get('dataRegistro','20251124') or '20251124')
+                inp_emb = st.text_input("Data Embarque", value=cab_sgw.get('dataEmbarqueISO','20251025') or '20251025')
+            with xc2:
+                st.markdown("**Pesos (formato XML)**")
+                _pb = DataFormatter.format_quantity(cab_sgw.get('pesoBruto','0'),15) if cab_sgw.get('pesoBruto') else '000000000000000'
+                _pl = DataFormatter.format_quantity(cab_sgw.get('pesoLiquido','0'),15) if cab_sgw.get('pesoLiquido') else '000000000000000'
+                inp_pb = st.text_input("Peso Bruto (XML)", value=_pb)
+                inp_pl = st.text_input("Peso Líquido (XML)", value=_pl)
+                
+                st.markdown("**Locais (R$ / US$)**")
+                inp_ldd = st.text_input("Descarga US$", value=adu_usd_auto)
+                inp_ldr = st.text_input("Descarga R$", value=adu_brl_auto)
+                inp_led = st.text_input("Embarque US$", value=fob_usd_auto)
+                inp_ler = st.text_input("Embarque R$", value=fob_brl_auto)
+                
+                if has_auto_values:
+                    ph("""
+                    <div style="font-size:0.7rem;color:var(--text-secondary);margin-top:0.25rem;">
+                        ⚡ Valores preenchidos automaticamente do PDF Sigraweb
+                    </div>
+                    """)
+            with xc3:
+                st.markdown("**Pagamento & Conhecimento**")
+                inp_ag = st.text_input("Agência", value=cab_sgw.get('agencia','3715') or '3715')
+                inp_bco = st.text_input("Banco", value="341")
+                inp_idc = st.text_input("IDT Conhecimento", value=cab_sgw.get('idtConhecimento','CE123456') or 'CE123456')
+                inp_idm = st.text_input("IDT Master", value=cab_sgw.get('idtMaster','CE123456') or 'CE123456')
+                
+                st.markdown("**Receita 7811**")
+                inp_r78 = st.text_input("Valor 7811", value=siscomex_auto)
+                
+                if siscomex_auto != '000000000000000':
+                    ph("""
+                    <div style="font-size:0.7rem;color:var(--text-secondary);margin-top:0.25rem;">
+                        ⚡ Valor preenchido automaticamente do PDF Sigraweb
+                    </div>
+                    """)
+
+        user_xml = {
+            "quantidadeVolume": inp_vol,
+            "cargaDataChegada": inp_cheg,
+            "dataDesembaraco": inp_desemb,
+            "dataRegistro": inp_reg,
+            "conhecimentoCargaEmbarqueData": inp_emb,
+            "cargaPesoBruto": inp_pb,
+            "cargaPesoLiquido": inp_pl,
+            "agenciaPagamento": inp_ag,
+            "bancoPagamento": inp_bco,
+            "valorReceita7811": inp_r78,
+            "localDescargaTotalDolares": inp_ldd,
+            "localDescargaTotalReais": inp_ldr,
+            "localEmbarqueTotalDolares": inp_led,
+            "localEmbarqueTotalReais": inp_ler,
+            "conhecimentoCargaId": inp_idc,
+            "conhecimentoCargaIdMaster": inp_idm,
+        }
+
+        st.divider()
+
+        if st.session_state["merged_df"] is not None:
+            if st.button("⚙️ Gerar XML (Layout 8686)", type="primary", **_WS):
+                try:
+                    p = st.session_state["parsed_duimp"]
+                    records = st.session_state["merged_df"].to_dict("records")
+                    for i, item in enumerate(p.items):
+                        if i < len(records):
+                            item.update(records[i])
+                    builder = XMLBuilder(p)
+                    xml_bytes = builder.build(user_inputs=user_xml)
+                    duimp_num = p.header.get("numeroDUIMP","0000").replace("/","-")
+                    st.download_button(
+                        "⬇️ Baixar XML", data=xml_bytes,
+                        file_name=f"DUIMP_{duimp_num}_INTEGRADO.xml",
+                        mime="text/xml", **_WS,
+                    )
+                    st.success("✅ XML gerado com sucesso!")
+                    with st.expander("👁️ Preview XML"):
+                        st.code(xml_bytes.decode('utf-8', errors='ignore')[:3000], language='xml')
+                except Exception as e:
+                    st.error(f"Erro: {e}")
+                    st.code(traceback.format_exc())
+        else:
+            empty_state("💾", "Nenhum dado disponível",
+                        "Realize o upload e a vinculação antes de gerar o XML")
 
 
 # ==============================================================================
