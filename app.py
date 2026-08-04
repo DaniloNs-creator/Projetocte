@@ -1084,12 +1084,15 @@ def cte_processor_app():
                     temp_zip_files = []
                     all_xml_files = []
                     
-                    # Processa uploads individuais
+                    # ==========================================================
+                    # [ CORREÇÃO APLICADA AQUI ] - Processa uploads XML individuais
+                    # ==========================================================
                     if uploaded_files:
                         log_fn(f"📂 Preparando {len(uploaded_files)} arquivo(s) XML...", 'info')
                         
                         temp_dir = tempfile.mkdtemp(prefix="cte_upload_")
                         for file in uploaded_files:
+                            # Salva o objeto UploadedFile em disco antes de ler (CORREÇÃO)
                             temp_path = Path(temp_dir) / file.name
                             with open(temp_path, 'wb') as f:
                                 f.write(file.getvalue())
@@ -1098,24 +1101,28 @@ def cte_processor_app():
                         
                         total_files += len(uploaded_files)
                     
-                    # Processa ZIPs
+                    # ==========================================================
+                    # [ CORREÇÃO APLICADA AQUI ] - Processa ZIPs
+                    # ==========================================================
                     if zip_files:
                         log_fn(f"📦 Preparando {len(zip_files)} arquivo(s) ZIP...", 'info')
                         
                         zip_temp_dir = tempfile.mkdtemp(prefix="cte_zips_")
                         for file in zip_files:
+                            # Salva o ZIP em disco antes de abrir (CORREÇÃO)
                             temp_zip_path = Path(zip_temp_dir) / file.name
                             with open(temp_zip_path, 'wb') as f:
                                 f.write(file.getvalue())
                             temp_zip_files.append(temp_zip_path)
                             
-                            # Extrai XMLs do ZIP
+                            # Extrai XMLs do ZIP a partir do arquivo físico no disco (CORREÇÃO)
                             try:
                                 with zipfile.ZipFile(temp_zip_path, 'r') as zf:
                                     for name in zf.namelist():
                                         if name.lower().endswith('.xml'):
                                             content = zf.read(name)
-                                            xml_name = f"{file.stem}_{Path(name).name}"
+                                            # CORREÇÃO: Usa Path(file).stem em vez de file.stem para garantir
+                                            xml_name = f"{Path(file.name).stem}_{Path(name).name}"
                                             xml_path = Path(zip_temp_dir) / xml_name
                                             with open(xml_path, 'wb') as f:
                                                 f.write(content)
