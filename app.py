@@ -1,6 +1,6 @@
 # ==============================================================================
 # SISTEMA DE PROCESSAMENTO UNIFICADO 2026 - HÄFELE BRASIL
-# Versão: 5.0 FINAL - Unificação Total (CT-e, MasterSAF, DUIMP, Sigraweb, TXT)
+# Versão: 5.1 FINAL - Correção de Layout e Siscomex
 # ==============================================================================
 
 import streamlit as st
@@ -2695,8 +2695,11 @@ class SigrawebPDFParser:
 # PARTE 4 — montar_descricao_final + DuimpPDFParser
 # ==============================================================================
 def montar_descricao_final(desc_complementar, codigo_extra, detalhamento):
-    # CORREÇÃO DA INVERSÃO DO XML AQUI!
-    # A ordem correta de saída deve ser: CÓDIGO - DESCRIÇÃO
+    # ==============================================================
+    # CORREÇÃO DA INVERSÃO NO XML AQUI!
+    # O formato padrão do XML gerado deve ser: "CÓDIGO - DESCRIÇÃO"
+    # ==============================================================
+    # Prioridade: se temos código (NUMBER) e descrição (detalhamento), juntamos nessa ordem
     if codigo_extra and detalhamento:
         return f"{codigo_extra} - {detalhamento}"
     elif codigo_extra:
@@ -3192,7 +3195,12 @@ class XMLBuilder:
             input_number  = str(it.get("NUMBER","")).strip()
             original_desc = DataFormatter.clean_text(it.get("descricao",""))
             desc_compl    = DataFormatter.clean_text(it.get("desc_complementar",""))
+            
+            # ==============================================================
+            # CORREÇÃO APLICADA AQUI: Garante a ordem CÓDIGO - DESCRIÇÃO
+            # ==============================================================
             final_desc    = montar_descricao_final(desc_compl, input_number, original_desc)
+            
             vtvf  = DataFormatter.format_high_precision(it.get("valorTotal","0"), 11)
             vuf   = DataFormatter.format_high_precision(it.get("valorUnit","0"), 20)
             qcr   = it.get("quantidade_comercial") or it.get("quantidade")
@@ -3287,7 +3295,7 @@ class XMLBuilder:
             {"code":"5629","val":totals["cofins"]},
         ]
         # ==============================================================
-        # PREENCHIMENTO AUTOMÁTICO DA SISCOMEX
+        # PREENCHIMENTO AUTOMÁTICO DA SISCOMEX (Receita 7811)
         # ==============================================================
         if user_inputs and user_inputs.get("valorReceita7811","0") not in ("0","000000000000000"):
             receitas.append({"code":"7811","val":float(user_inputs["valorReceita7811"])})
