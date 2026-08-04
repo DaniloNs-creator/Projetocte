@@ -1916,10 +1916,6 @@ def app_mastersaf():
 
                     if gerar_excel and zip_found:
                         status_box.info("📊 Processando XMLs e montando Excel...")
-                        
-                        # ==========================================================
-                        # [ PROCESSAMENTO VIA DISCO ] - Chama o método que já salva em disco
-                        # ==========================================================
                         processor.process_directory(dl_path, add_ms_log)
                         add_ms_log(f"📊 CT-es identificados: {len(processor.processed_data)}", 'ok')
                     progress_bar.progress(0.92)
@@ -2699,7 +2695,15 @@ class SigrawebPDFParser:
 # PARTE 4 — montar_descricao_final + DuimpPDFParser
 # ==============================================================================
 def montar_descricao_final(desc_complementar, codigo_extra, detalhamento):
-    return f"{str(desc_complementar).strip()} - {str(codigo_extra).strip()} - {str(detalhamento).strip()}"
+    # CORREÇÃO DA INVERSÃO DO XML AQUI!
+    # A ordem correta de saída deve ser: CÓDIGO - DESCRIÇÃO
+    if codigo_extra and detalhamento:
+        return f"{codigo_extra} - {detalhamento}"
+    elif codigo_extra:
+        return codigo_extra
+    elif detalhamento:
+        return detalhamento
+    return desc_complementar
 
 
 class DuimpPDFParser:
@@ -3282,6 +3286,9 @@ class XMLBuilder:
             {"code":"5602","val":totals["pis"]},
             {"code":"5629","val":totals["cofins"]},
         ]
+        # ==============================================================
+        # PREENCHIMENTO AUTOMÁTICO DA SISCOMEX
+        # ==============================================================
         if user_inputs and user_inputs.get("valorReceita7811","0") not in ("0","000000000000000"):
             receitas.append({"code":"7811","val":float(user_inputs["valorReceita7811"])})
 
