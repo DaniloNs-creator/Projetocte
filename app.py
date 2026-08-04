@@ -3103,7 +3103,11 @@ def sistema_integrado_duimp():
                 # Descarga R$  ← Valor Aduaneiro BRL
                 # Embarque US$ ← FOB USD
                 # Embarque R$  ← FOB BRL
-                # ═══════════════════════════════════════════════════════════                inp_ldd = st.text_input("Descarga US$", value=adu_usd_auto)
+                # ═══════════════════════════════════════════════════════════
+                
+                # [ CORREÇÃO APLICADA AQUI ]: A linha abaixo estava faltando e foi reinserida!
+                inp_ldd = st.text_input("Descarga US$", value=adu_usd_auto) 
+                
                 inp_ldr = st.text_input("Descarga R$",  value=adu_brl_auto)
                 inp_led = st.text_input("Embarque US$", value=fob_usd_auto)
                 inp_ler = st.text_input("Embarque R$",  value=fob_brl_auto)
