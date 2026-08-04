@@ -1,6 +1,6 @@
 # ==============================================================================
 # SISTEMA DE PROCESSAMENTO DE CT-e 2026 - HÄFELE BRASIL
-# Versão: 3.0 - Processamento Massivo de XML CT-e
+# Versão: 3.1 - Suporte a Múltiplos ZIPs e Processamento Massivo
 # ==============================================================================
 
 import streamlit as st
@@ -25,8 +25,9 @@ from pathlib import Path
 import zipfile
 import shutil
 import concurrent.futures
-from threading import Lock
+from threading import Lock, Semaphore
 import base64
+import psutil
 
 # ==============================================================================
 # CONFIGURAÇÃO AUTOMÁTICA DO SERVIDOR STREAMLIT
@@ -83,6 +84,7 @@ _defaults = {
     'processing_log': [],
     'total_processed': 0,
     'total_errors': 0,
+    'total_files': 0,
 }
 for k, v in _defaults.items():
     if k not in st.session_state:
@@ -512,6 +514,33 @@ def load_css():
     }
     .cte-stat-sub{font-size:.72rem;color:var(--muted2);margin-top:.35rem;}
 
+    .progress-container {
+        background: var(--surface);
+        border-radius: var(--r-lg);
+        padding: 1.5rem;
+        margin: 1rem 0;
+        border: 1px solid var(--border);
+    }
+    .progress-bar-bg {
+        background: var(--bg);
+        border-radius: 10px;
+        height: 24px;
+        overflow: hidden;
+        position: relative;
+    }
+    .progress-bar-fill {
+        height: 100%;
+        background: linear-gradient(90deg, var(--blue-l), var(--green-l));
+        transition: width 0.5s ease;
+        border-radius: 10px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: white;
+        font-weight: 600;
+        font-size: 0.75rem;
+    }
+
     @media(max-width:1024px){
         .cte-stat-grid{grid-template-columns:repeat(3,1fr);}
         .hero{padding:2rem 2rem 1.8rem;}
@@ -538,18 +567,20 @@ def load_css():
 
 
 # ==============================================================================
-# PROCESSADOR CT-e
+# PROCESSADOR CT-e OTIMIZADO PARA MÚLTIPLOS ZIPS E 50K+ XMLs
 # ==============================================================================
 class CTeProcessor:
-    """Processador otimizado para extração de dados de CT-e em massa"""
+    """Processador otimizado para extração de dados de CT-e em massa com suporte a múltiplos ZIPs"""
     
     def __init__(self):
         self.processed_data = []
         self.errors = []
         self.total_processed = 0
+        self.total_files_scanned = 0
         self.lock = Lock()
         self._namespace_cache = {}
-
+        self.batch_size = 1000  # Processa em lotes para evitar sobrecarga
+        
     def extract_nfe_number_from_key(self, chave_acesso: str) -> Optional[str]:
         """Extrai número da NFe da chave de acesso (posições 25-34)"""
         if not chave_acesso or len(chave_acesso) != 44:
@@ -564,7 +595,6 @@ class CTeProcessor:
         try:
             tipos_peso = ['PESO BRUTO', 'PESO BASE DE CALCULO', 'PESO BASE CALCCULO', 'PESO']
             
-            # Tenta com namespaces
             for prefix, uri in CTE_NAMESPACES.items():
                 for infQ in root.findall(f'.//{{{uri}}}infQ'):
                     tpMed = infQ.find(f'{{{uri}}}tpMed')
@@ -574,7 +604,6 @@ class CTeProcessor:
                             if tp in tpMed.text.upper():
                                 return float(qCarga.text)
             
-            # Tenta sem namespaces
             for infQ in root.findall('.//infQ'):
                 tpMed = infQ.find('tpMed')
                 qCarga = infQ.find('qCarga')
@@ -589,13 +618,11 @@ class CTeProcessor:
     def _find_text(self, element: ET.Element, xpath: str) -> Optional[str]:
         """Busca texto em elemento com suporte a namespaces"""
         try:
-            # Tenta com namespaces
             for prefix, uri in CTE_NAMESPACES.items():
                 found = element.find(xpath.replace('cte:', f'{{{uri}}}'))
                 if found is not None and found.text:
                     return found.text.strip()
             
-            # Tenta sem namespace
             found = element.find(xpath.replace('cte:', ''))
             if found is not None and found.text:
                 return found.text.strip()
@@ -604,21 +631,18 @@ class CTeProcessor:
         except Exception:
             return None
 
-    def extract_cte_data(self, xml_content: bytes, filename: str) -> Optional[Dict]:
+    def extract_cte_data(self, xml_content: bytes, filename: str, batch_id: str = "") -> Optional[Dict]:
         """Extrai todos os dados relevantes de um arquivo CT-e"""
         try:
-            # Tenta parse do XML
             try:
                 root = ET.fromstring(xml_content)
             except ET.ParseError:
-                # Tenta com encoding diferente
                 try:
                     content_str = xml_content.decode('utf-8', errors='replace')
                     root = ET.fromstring(content_str)
                 except Exception:
                     return None
 
-            # Extrai campos principais
             nCT = self._find_text(root, './/cte:nCT')
             dhEmi = self._find_text(root, './/cte:dhEmi')
             cMunIni = self._find_text(root, './/cte:cMunIni')
@@ -640,13 +664,9 @@ class CTeProcessor:
             dest_CEP = self._find_text(root, './/cte:dest/cte:enderDest/cte:CEP')
             infNFe_chave = self._find_text(root, './/cte:infNFe/cte:chave')
             
-            # Número da NFe da chave
             numero_nfe = self.extract_nfe_number_from_key(infNFe_chave) if infNFe_chave else None
-            
-            # Peso bruto
             peso_bruto = self.extract_peso_bruto(root)
 
-            # Formata data
             data_formatada = None
             if dhEmi:
                 for fmt in ('%Y-%m-%d', '%d/%m/%Y', '%Y-%m-%dT%H:%M:%S'):
@@ -658,10 +678,8 @@ class CTeProcessor:
                 if not data_formatada:
                     data_formatada = dhEmi[:10]
 
-            # Documento destinatário
             documento_destinatario = dest_CNPJ or dest_CPF or 'N/A'
             
-            # Endereço completo
             endereco = ""
             if dest_xLgr:
                 endereco += dest_xLgr
@@ -672,7 +690,6 @@ class CTeProcessor:
                 if dest_CEP: endereco += f" - CEP: {dest_CEP}"
             endereco = endereco or "N/A"
 
-            # Valor da prestação
             try:
                 vTPrest = float(vTPrest) if vTPrest else 0.0
             except (ValueError, TypeError):
@@ -680,6 +697,7 @@ class CTeProcessor:
 
             return {
                 'Arquivo': filename,
+                'Lote': batch_id,
                 'nCT': nCT or 'N/A',
                 'Data Emissao': data_formatada or dhEmi or 'N/A',
                 'Cod Municipio Inicio': cMunIni or 'N/A',
@@ -704,23 +722,20 @@ class CTeProcessor:
             logger.error(f"Erro ao processar {filename}: {e}")
             return None
 
-    def process_xml_file(self, file_path: Path, log_fn=None) -> Optional[Dict]:
+    def process_xml_file(self, file_path: Path, batch_id: str = "", log_fn=None) -> Optional[Dict]:
         """Processa um arquivo XML individual"""
         try:
             with open(file_path, 'rb') as f:
                 content = f.read()
             
-            # Verifica se é um CT-e
             try:
                 content_str = content.decode('utf-8', errors='replace')
                 if 'CTe' not in content_str and 'conhecimento' not in content_str.lower():
-                    if log_fn:
-                        log_fn(f"⚠️ {file_path.name} não é um CT-e válido", 'warn')
                     return None
             except Exception:
                 return None
             
-            data = self.extract_cte_data(content, file_path.name)
+            data = self.extract_cte_data(content, file_path.name, batch_id)
             
             if data:
                 with self.lock:
@@ -736,145 +751,87 @@ class CTeProcessor:
             with self.lock:
                 self.errors.append(f"{file_path.name}: {str(e)}")
             if log_fn:
-                log_fn(f"❌ Erro ao processar {file_path.name}: {e}", 'err')
+                log_fn(f"❌ Erro: {file_path.name} - {e}", 'err')
             return None
 
-    def process_files(self, files: List[Path], log_fn=None, max_workers: int = 8) -> int:
-        """Processa múltiplos arquivos em paralelo"""
-        processed_count = 0
-        
-        if log_fn:
-            log_fn(f"📂 Iniciando processamento de {len(files)} arquivo(s)", 'info')
-        
-        # Filtra apenas XML
-        xml_files = [f for f in files if f.suffix.lower() == '.xml']
-        
-        if not xml_files:
-            if log_fn:
-                log_fn("⚠️ Nenhum arquivo XML encontrado", 'warn')
+    def process_files_batch(self, files: List[Path], batch_id: str = "", log_fn=None, 
+                           max_workers: int = 8, progress_callback=None) -> int:
+        """Processa múltiplos arquivos em paralelo com controle de progresso"""
+        if not files:
             return 0
         
-        if log_fn:
-            log_fn(f"🔍 {len(xml_files)} arquivo(s) XML identificados", 'info')
+        processed_count = 0
+        total = len(files)
         
-        # Processa em paralelo
-        with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
-            futures = {executor.submit(self.process_xml_file, f, log_fn): f for f in xml_files}
+        # Processa em lotes para evitar sobrecarga
+        for i in range(0, total, self.batch_size):
+            batch = files[i:i + self.batch_size]
             
-            for i, future in enumerate(concurrent.futures.as_completed(futures)):
-                result = future.result()
-                if result:
-                    processed_count += 1
+            with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+                futures = {executor.submit(self.process_xml_file, f, batch_id, log_fn): f for f in batch}
                 
-                # Atualiza progresso a cada 50 arquivos
-                if (i + 1) % 50 == 0 and log_fn:
-                    log_fn(f"📊 {i + 1}/{len(xml_files)} arquivos processados", 'info')
-        
-        if log_fn:
-            log_fn(f"✅ Processamento concluído: {processed_count} CT-es extraídos", 'ok')
-            if self.errors:
-                log_fn(f"⚠️ {len(self.errors)} erro(s) durante o processamento", 'warn')
+                for future in concurrent.futures.as_completed(futures):
+                    result = future.result()
+                    if result:
+                        processed_count += 1
+                    
+                    if progress_callback:
+                        progress_callback(i + len(batch), total)
+            
+            # Força garbage collection após cada lote
+            gc.collect()
         
         return processed_count
 
-    def process_zip(self, zip_bytes: bytes, log_fn=None) -> int:
-        """Processa arquivos XML dentro de um ZIP"""
+    def process_zip_file(self, zip_path: Path, batch_id: str = "", log_fn=None, 
+                        max_workers: int = 8, progress_callback=None) -> int:
+        """Processa um arquivo ZIP contendo XMLs"""
         try:
-            with zipfile.ZipFile(io.BytesIO(zip_bytes)) as zf:
-                # Extrai para diretório temporário
-                temp_dir = tempfile.mkdtemp(prefix="cte_zip_")
-                xml_files = []
-                
+            temp_dir = tempfile.mkdtemp(prefix="cte_zip_")
+            xml_files = []
+            
+            with zipfile.ZipFile(zip_path, 'r') as zf:
                 for name in zf.namelist():
                     if name.lower().endswith('.xml'):
-                        # Extrai o arquivo
                         content = zf.read(name)
                         temp_path = Path(temp_dir) / Path(name).name
                         with open(temp_path, 'wb') as f:
                             f.write(content)
                         xml_files.append(temp_path)
-                
-                if log_fn:
-                    log_fn(f"📦 {len(xml_files)} XML(s) extraídos do ZIP", 'info')
-                
-                # Processa os arquivos
-                result = self.process_files(xml_files, log_fn)
-                
-                # Limpa diretório temporário
-                shutil.rmtree(temp_dir, ignore_errors=True)
-                
-                return result
-                
-        except Exception as e:
+            
             if log_fn:
-                log_fn(f"❌ Erro ao processar ZIP: {e}", 'err')
-            return 0
-
-    def export_to_excel(self) -> Optional[bytes]:
-        """Exporta os dados processados para Excel com formatação profissional"""
-        if not self.processed_data:
-            return None
-        
-        df = pd.DataFrame(self.processed_data)
-        buf = io.BytesIO()
-        
-        try:
-            with pd.ExcelWriter(buf, engine='openpyxl') as writer:
-                df.to_excel(writer, index=False, sheet_name='Dados_CTe')
-                
-                # Formatação
-                from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
-                from openpyxl.utils import get_column_letter
-                
-                ws = writer.sheets['Dados_CTe']
-                
-                # Estilos
-                header_fill = PatternFill('solid', start_color='0D1B2A', end_color='0D1B2A')
-                header_font = Font(bold=True, color='22D3A5', name='Inter', size=10)
-                border = Border(
-                    left=Side(style='thin', color='1A2A3A'),
-                    right=Side(style='thin', color='1A2A3A'),
-                    top=Side(style='thin', color='1A2A3A'),
-                    bottom=Side(style='thin', color='1A2A3A')
-                )
-                
-                # Aplica estilos ao cabeçalho
-                for cell in ws[1]:
-                    cell.fill = header_fill
-                    cell.font = header_font
-                    cell.alignment = Alignment(horizontal='center', vertical='center')
-                    cell.border = border
-                
-                # Ajusta largura das colunas
-                for col in ws.columns:
-                    max_length = 0
-                    column = col[0].column_letter
-                    for cell in col:
-                        try:
-                            if len(str(cell.value)) > max_length:
-                                max_length = len(str(cell.value))
-                        except:
-                            pass
-                    adjusted_width = min(max_length + 4, 50)
-                    ws.column_dimensions[column].width = adjusted_width
-                
-                # Formata números
-                for idx, cell in enumerate(ws[1], 1):
-                    if cell.value in ['Valor Prestacao', 'Peso Bruto (kg)']:
-                        col_letter = get_column_letter(idx)
-                        for row in ws.iter_rows(min_row=2, max_row=ws.max_row, min_col=idx, max_col=idx):
-                            for c in row:
-                                c.number_format = '#,##0.00'
-                
-                # Congela o cabeçalho
-                ws.freeze_panes = 'A2'
-                
-            buf.seek(0)
-            return buf.getvalue()
+                log_fn(f"📦 {len(xml_files)} XMLs extraídos de {zip_path.name}", 'info')
+            
+            result = self.process_files_batch(xml_files, batch_id, log_fn, max_workers, progress_callback)
+            
+            # Limpa diretório temporário
+            shutil.rmtree(temp_dir, ignore_errors=True)
+            
+            return result
             
         except Exception as e:
-            logger.error(f"Erro ao exportar Excel: {e}")
-            return None
+            if log_fn:
+                log_fn(f"❌ Erro ao processar ZIP {zip_path.name}: {e}", 'err')
+            return 0
+
+    def process_multiple_zips(self, zip_files: List[Path], log_fn=None, 
+                            max_workers: int = 8, progress_callback=None) -> Dict[str, int]:
+        """Processa múltiplos arquivos ZIP em sequência"""
+        results = {}
+        total_zips = len(zip_files)
+        
+        for idx, zip_path in enumerate(zip_files):
+            batch_id = f"ZIP_{idx+1}_{zip_path.stem}"
+            if log_fn:
+                log_fn(f"📦 Processando {zip_path.name} ({idx+1}/{total_zips})...", 'info')
+            
+            count = self.process_zip_file(zip_path, batch_id, log_fn, max_workers, progress_callback)
+            results[zip_path.name] = count
+            
+            if log_fn:
+                log_fn(f"✅ {zip_path.name}: {count} CT-es extraídos", 'ok')
+        
+        return results
 
     def get_dataframe(self) -> Optional[pd.DataFrame]:
         """Retorna os dados como DataFrame"""
@@ -906,11 +863,73 @@ class CTeProcessor:
             'errors': len(self.errors)
         }
 
+    def export_to_excel(self) -> Optional[bytes]:
+        """Exporta os dados processados para Excel com formatação profissional"""
+        if not self.processed_data:
+            return None
+        
+        df = pd.DataFrame(self.processed_data)
+        buf = io.BytesIO()
+        
+        try:
+            with pd.ExcelWriter(buf, engine='openpyxl') as writer:
+                df.to_excel(writer, index=False, sheet_name='Dados_CTe')
+                
+                from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+                from openpyxl.utils import get_column_letter
+                
+                ws = writer.sheets['Dados_CTe']
+                
+                header_fill = PatternFill('solid', start_color='0D1B2A', end_color='0D1B2A')
+                header_font = Font(bold=True, color='22D3A5', name='Inter', size=10)
+                border = Border(
+                    left=Side(style='thin', color='1A2A3A'),
+                    right=Side(style='thin', color='1A2A3A'),
+                    top=Side(style='thin', color='1A2A3A'),
+                    bottom=Side(style='thin', color='1A2A3A')
+                )
+                
+                for cell in ws[1]:
+                    cell.fill = header_fill
+                    cell.font = header_font
+                    cell.alignment = Alignment(horizontal='center', vertical='center')
+                    cell.border = border
+                
+                for col in ws.columns:
+                    max_length = 0
+                    column = col[0].column_letter
+                    for cell in col:
+                        try:
+                            if len(str(cell.value)) > max_length:
+                                max_length = len(str(cell.value))
+                        except:
+                            pass
+                    adjusted_width = min(max_length + 4, 50)
+                    ws.column_dimensions[column].width = adjusted_width
+                
+                for idx, cell in enumerate(ws[1], 1):
+                    if cell.value in ['Valor Prestacao', 'Peso Bruto (kg)']:
+                        col_letter = get_column_letter(idx)
+                        for row in ws.iter_rows(min_row=2, max_row=ws.max_row, min_col=idx, max_col=idx):
+                            for c in row:
+                                c.number_format = '#,##0.00'
+                
+                ws.freeze_panes = 'A2'
+                
+            buf.seek(0)
+            return buf.getvalue()
+            
+        except Exception as e:
+            logger.error(f"Erro ao exportar Excel: {e}")
+            return None
+
     def clear_data(self):
         """Limpa todos os dados processados"""
         self.processed_data = []
         self.errors = []
         self.total_processed = 0
+        self.total_files_scanned = 0
+        gc.collect()
 
 
 # ==============================================================================
@@ -962,16 +981,35 @@ def cte_processor_app():
             ph("""
             <div class="uzone">
                 <div class="uzone-icon">📦</div>
-                <div class="uzone-title">Upload de ZIP</div>
-                <div class="uzone-sub">Selecione um arquivo .ZIP com XMLs</div>
+                <div class="uzone-title">Upload de Múltiplos ZIPs</div>
+                <div class="uzone-sub">Selecione um ou mais arquivos .ZIP com XMLs</div>
             </div>""")
             
-            zip_file = st.file_uploader(
-                "Arquivo ZIP",
+            zip_files = st.file_uploader(
+                "Arquivos ZIP",
                 type=['zip'],
-                accept_multiple_files=False,
+                accept_multiple_files=True,
                 key="zip_uploader"
             )
+
+        # Configurações de processamento
+        with st.expander("⚙️ Configurações Avançadas", expanded=False):
+            col_cfg1, col_cfg2 = st.columns(2)
+            
+            with col_cfg1:
+                max_workers = st.number_input(
+                    "Threads simultâneas",
+                    min_value=1,
+                    max_value=16,
+                    value=8,
+                    help="Mais threads = processamento mais rápido, mas usa mais CPU/memória"
+                )
+            
+            with col_cfg2:
+                st.info(
+                    f"💾 Memória disponível: {psutil.virtual_memory().available // (1024**2)} MB\n"
+                    f"🧠 Processador: {psutil.cpu_count()} núcleos"
+                )
 
         # Container para logs
         log_container = st.container()
@@ -992,23 +1030,23 @@ def cte_processor_app():
                 processor.clear_data()
                 st.session_state.cte_data = []
                 st.session_state.cte_df = None
+                st.session_state.total_processed = 0
+                st.session_state.total_errors = 0
                 st.rerun()
 
         # Processamento
         if process_btn:
-            if not uploaded_files and not zip_file:
+            if not uploaded_files and not zip_files:
                 st.warning("⚠️ Selecione pelo menos um arquivo XML ou ZIP para processar.")
             else:
-                # Limpa dados anteriores
                 processor.clear_data()
                 
-                # Cria log de processamento
                 logs = []
                 log_placeholder = st.empty()
+                progress_placeholder = st.empty()
                 
                 def log_fn(msg, level='info'):
                     logs.append({'msg': msg, 'level': level})
-                    # Atualiza log a cada 10 mensagens
                     if len(logs) % 10 == 0:
                         render_logs(logs, log_placeholder)
                 
@@ -1020,36 +1058,116 @@ def cte_processor_app():
                     html += '</div>'
                     placeholder.markdown(html, unsafe_allow_html=True)
                 
+                def update_progress(current, total):
+                    if total > 0:
+                        pct = int((current / total) * 100)
+                        progress_placeholder.markdown(f"""
+                        <div class="progress-container">
+                            <div style="display:flex;justify-content:space-between;margin-bottom:0.5rem;">
+                                <span style="font-weight:600;">Progresso</span>
+                                <span style="font-weight:600;color:var(--blue-l);">{pct}%</span>
+                            </div>
+                            <div class="progress-bar-bg">
+                                <div class="progress-bar-fill" style="width:{pct}%;">
+                                    {pct}%
+                                </div>
+                            </div>
+                            <div style="text-align:center;margin-top:0.5rem;font-size:0.85rem;color:var(--muted);">
+                                {current:,} de {total:,} arquivos processados
+                            </div>
+                        </div>
+                        """, unsafe_allow_html=True)
+                
                 try:
-                    # Processa arquivos XML
+                    total_files = 0
                     temp_files = []
+                    temp_zip_files = []
+                    all_xml_files = []
                     
                     # Processa uploads individuais
                     if uploaded_files:
-                        log_fn(f"📂 Processando {len(uploaded_files)} arquivo(s) XML...", 'info')
+                        log_fn(f"📂 Preparando {len(uploaded_files)} arquivo(s) XML...", 'info')
                         
-                        # Salva em temp
                         temp_dir = tempfile.mkdtemp(prefix="cte_upload_")
                         for file in uploaded_files:
                             temp_path = Path(temp_dir) / file.name
                             with open(temp_path, 'wb') as f:
                                 f.write(file.getvalue())
                             temp_files.append(temp_path)
+                            all_xml_files.append(temp_path)
                         
-                        # Processa
-                        count = processor.process_files(temp_files, log_fn)
-                        log_fn(f"✅ {count} CT-es extraídos dos arquivos XML", 'ok')
+                        total_files += len(uploaded_files)
                     
-                    # Processa ZIP
-                    if zip_file:
-                        log_fn(f"📦 Processando arquivo ZIP: {zip_file.name}", 'info')
-                        zip_bytes = zip_file.getvalue()
-                        count = processor.process_zip(zip_bytes, log_fn)
-                        log_fn(f"✅ {count} CT-es extraídos do ZIP", 'ok')
+                    # Processa ZIPs
+                    if zip_files:
+                        log_fn(f"📦 Preparando {len(zip_files)} arquivo(s) ZIP...", 'info')
+                        
+                        zip_temp_dir = tempfile.mkdtemp(prefix="cte_zips_")
+                        for file in zip_files:
+                            temp_zip_path = Path(zip_temp_dir) / file.name
+                            with open(temp_zip_path, 'wb') as f:
+                                f.write(file.getvalue())
+                            temp_zip_files.append(temp_zip_path)
+                            
+                            # Extrai XMLs do ZIP
+                            try:
+                                with zipfile.ZipFile(temp_zip_path, 'r') as zf:
+                                    for name in zf.namelist():
+                                        if name.lower().endswith('.xml'):
+                                            content = zf.read(name)
+                                            xml_name = f"{file.stem}_{Path(name).name}"
+                                            xml_path = Path(zip_temp_dir) / xml_name
+                                            with open(xml_path, 'wb') as f:
+                                                f.write(content)
+                                            all_xml_files.append(xml_path)
+                                            total_files += 1
+                            except Exception as e:
+                                log_fn(f"⚠️ Erro ao extrair {file.name}: {e}", 'warn')
+                        
+                        log_fn(f"📦 {total_files} XMLs extraídos dos ZIPs", 'info')
+                    
+                    # Processa todos os XMLs
+                    if all_xml_files:
+                        log_fn(f"🚀 Iniciando processamento de {len(all_xml_files)} XMLs...", 'info')
+                        
+                        # Processa em lotes
+                        batch_size = 1000
+                        total_batches = (len(all_xml_files) + batch_size - 1) // batch_size
+                        
+                        for batch_idx in range(total_batches):
+                            start_idx = batch_idx * batch_size
+                            end_idx = min(start_idx + batch_size, len(all_xml_files))
+                            batch = all_xml_files[start_idx:end_idx]
+                            
+                            log_fn(f"📊 Lote {batch_idx + 1}/{total_batches} ({len(batch)} arquivos)", 'info')
+                            
+                            count = processor.process_files_batch(
+                                batch,
+                                batch_id=f"LOTE_{batch_idx+1}",
+                                log_fn=log_fn,
+                                max_workers=max_workers,
+                                progress_callback=update_progress
+                            )
+                            
+                            # Atualiza estado
+                            st.session_state.total_processed += count
+                            
+                            # Força GC após cada lote
+                            gc.collect()
                     
                     # Resumo final
                     summary = processor.get_summary()
-                    log_fn(f"📊 TOTAL: {summary['total']} CT-es processados", 'ok')
+                    log_fn(f"", 'info')
+                    log_fn(f"══════════════════════════════════════", 'info')
+                    log_fn(f"📊 RESUMO FINAL", 'info')
+                    log_fn(f"✅ CT-es processados: {summary['total']:,}", 'ok')
+                    log_fn(f"📁 Arquivos lidos: {len(all_xml_files):,}", 'info')
+                    log_fn(f"💰 Valor total: R$ {summary['valor_total']:,.2f}", 'info')
+                    log_fn(f"⚖️ Peso total: {summary['peso_total']:,.0f} kg", 'info')
+                    log_fn(f"🏢 Emitentes únicos: {summary['emitentes_unicos']}", 'info')
+                    if summary['errors'] > 0:
+                        log_fn(f"⚠️ Erros: {summary['errors']}", 'warn')
+                    log_fn(f"══════════════════════════════════════", 'info')
                     
                     # Armazena no session state
                     st.session_state.cte_data = processor.processed_data
@@ -1058,18 +1176,23 @@ def cte_processor_app():
                     st.session_state.total_errors = summary['errors']
                     
                     # Limpa arquivos temporários
-                    for f in temp_files:
+                    for f in temp_files + all_xml_files + temp_zip_files:
                         try:
-                            os.unlink(f)
+                            if Path(f).exists():
+                                os.unlink(f)
                         except:
                             pass
+                    
+                    show_success_animation(f"Processamento concluído! {summary['total']:,} CT-es extraídos")
                     
                 except Exception as e:
                     log_fn(f"❌ ERRO: {str(e)}", 'err')
                     st.error(f"Erro durante o processamento: {str(e)}")
+                    st.code(traceback.format_exc())
                 
                 # Renderiza logs finais
                 render_logs(logs, log_placeholder)
+                progress_placeholder.empty()
 
         # Exibe logs se existirem
         if 'logs' in locals() and logs:
@@ -1189,9 +1312,8 @@ def cte_processor_app():
             # Tabela de dados
             section_title("📋 Dados")
             
-            cols_to_show = ['Arquivo', 'nCT', 'Data Emissao', 'Emitente', 'Remetente',
-                           'Destinatario', 'UF Inicio', 'UF Destino', 
-                           'Peso Bruto (kg)', 'Valor Prestacao']
+            cols_to_show = ['Lote', 'Arquivo', 'nCT', 'Data Emissao', 'Emitente', 
+                           'UF Inicio', 'UF Destino', 'Peso Bruto (kg)', 'Valor Prestacao']
             
             st.dataframe(
                 fdf[cols_to_show],
@@ -1209,7 +1331,6 @@ def cte_processor_app():
             v1, v2 = st.columns(2)
             
             with v1:
-                # Distribuição de peso
                 fig1 = px.histogram(
                     fdf, 
                     x='Peso Bruto (kg)',
@@ -1224,7 +1345,6 @@ def cte_processor_app():
                 st.plotly_chart(fig1, use_container_width=True)
             
             with v2:
-                # Peso vs Valor
                 fig2 = px.scatter(
                     fdf,
                     x='Peso Bruto (kg)',
@@ -1300,7 +1420,9 @@ def cte_processor_app():
             col_exp1, col_exp2 = st.columns([1, 2], gap="large")
             
             with col_exp1:
-                st.metric("📋 Registros", len(df))
+                st.metric("📋 Registros", f"{len(df):,}")
+                st.metric("📁 Arquivos", f"{df['Arquivo'].nunique():,}")
+                st.metric("📦 Lotes", f"{df['Lote'].nunique():,}" if 'Lote' in df.columns else "N/A")
                 
                 formato = st.radio(
                     "Formato de exportação",
@@ -1334,7 +1456,6 @@ def cte_processor_app():
                         use_container_width=True
                     )
                 else:
-                    # Fallback: exporta com pandas
                     buf = BytesIO()
                     with pd.ExcelWriter(buf, engine='xlsxwriter') as writer:
                         df_export.to_excel(writer, index=False, sheet_name='CTe')
@@ -1359,6 +1480,10 @@ def cte_processor_app():
                     type="primary",
                     use_container_width=True
                 )
+
+            # Estatísticas adicionais
+            with st.expander("📊 Estatísticas Detalhadas"):
+                st.dataframe(df.describe(), use_container_width=True)
 
             # Prévia
             with st.expander("👁️ Prévia dos dados"):
@@ -1387,7 +1512,8 @@ def main():
         <p class="hero-sub">Extração e análise de dados de Conhecimento de Transporte Eletrônico</p>
         <div class="hero-chips">
             <span class="chip">📦 XML</span>
-            <span class="chip">⚡ Massivo</span>
+            <span class="chip">📁 Múltiplos ZIPs</span>
+            <span class="chip">⚡ 50.000+</span>
             <span class="chip">📊 Análise</span>
             <span class="chip">📥 Exportação</span>
         </div>
