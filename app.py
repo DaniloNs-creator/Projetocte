@@ -1,9 +1,14 @@
+# ==============================================================================
+# SISTEMA DE PROCESSAMENTO UNIFICADO 2026 - HÄFELE BRASIL
+# Versão: 2.1 - Extração automática FOB, Aduaneiro e Siscomex da tabela
+# ==============================================================================
+
 import streamlit as st
 from datetime import datetime
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List, Tuple
 import chardet
 from io import BytesIO
 import time
@@ -20,7 +25,6 @@ import logging
 import gc
 import sqlite3
 from datetime import timedelta, date
-from typing import List, Tuple
 import io
 import contextlib
 import base64
@@ -41,9 +45,8 @@ import threading
 
 # ==============================================================================
 # CONFIGURAÇÃO AUTOMÁTICA DO SERVIDOR STREAMLIT
-# Suporta PDFs gigantes — até 2 GB
 # ==============================================================================
-_PDF_CHUNK_PAGES = 20   # Streamlit Cloud ~1GB RAM — chunks menores evitam OOM
+_PDF_CHUNK_PAGES = 20
 
 def setup_streamlit_config():
     try:
@@ -72,39 +75,21 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # ==============================================================================
-# COMPAT HELPER — compatibilidade de largura entre versões do Streamlit
-#
-# Histórico real das versões:
-#   • Streamlit < 1.44  → use_container_width=True/False   (ATUAL no Streamlit Cloud: 1.57.0)
-#   • Streamlit >= 1.44 → width='stretch'/'content'        (ainda não lançado publicamente)
-#
-# ATENÇÃO: 1.57.0 É UMA VERSÃO ATUAL QUE AINDA USA use_container_width.
-# A numeração do Streamlit não é linear — 1.57 NÃO é maior que 1.44 no sentido
-# de que width= tenha sido adicionado; a API width= foi anunciada para versão
-# futura. Por isso usamos uma probe direta no widget, não comparação de versão.
+# COMPAT HELPER
 # ==============================================================================
 def _w(stretch: bool = True):
-    """Retorna o kwarg correto de largura para widgets Streamlit.
-
-    Usa probe segura: tenta inspecionar a assinatura de st.dataframe para
-    detectar se o parâmetro 'width' (novo) ou 'use_container_width' (atual)
-    está disponível. Isso é 100% à prova de versão.
-    """
     try:
         import inspect
         sig = inspect.signature(st.dataframe)
         if "width" in sig.parameters and "use_container_width" not in sig.parameters:
-            # API nova: width='stretch'|'content'
             return {"width": "stretch" if stretch else "content"}
         else:
-            # API atual (Streamlit ≤ 1.57.x e anteriores)
             return {"use_container_width": stretch}
     except Exception:
-        # fallback conservador: use_container_width funciona em todas versões conhecidas
         return {"use_container_width": stretch}
 
-_WS = _w(True)   # largura total (substitui use_container_width=True)
-_WC = _w(False)  # largura natural (substitui use_container_width=False)
+_WS = _w(True)
+_WC = _w(False)
 
 # ==============================================================================
 # SESSION STATE
@@ -158,7 +143,6 @@ def show_success_animation(message="Concluído!"):
     ph_container.empty()
 
 def ph(html: str):
-    """Shortcut for st.markdown with unsafe_allow_html=True"""
     st.markdown(html, unsafe_allow_html=True)
 
 def page_header(icon: str, title: str, sub: str):
@@ -189,14 +173,12 @@ def status_warn(text: str):
     ph(f'<div class="sbox sbox-warn">⚠️ {text}</div>')
 
 # ==============================================================================
-# CSS — DESIGN SYSTEM PROFISSIONAL RESPONSIVO
+# CSS
 # ==============================================================================
 def load_css():
     ph("""<style>
-    /* ── Google Fonts ─────────────────────────────────────── */
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600&display=swap');
 
-    /* ── Design Tokens ────────────────────────────────────── */
     :root{
         --navy:#0A0F1E;
         --blue-dark:#0F2040;
@@ -232,10 +214,8 @@ def load_css():
         --sh-blue:0 8px 32px rgba(37,99,235,.20);
         --tr:all .2s cubic-bezier(.4,0,.2,1);
         --glow:0 0 0 3px rgba(59,130,246,.25);
-        --glow-green:0 0 0 3px rgba(16,185,129,.25);
     }
 
-    /* ── Base ─────────────────────────────────────────────── */
     html,body,[class*="css"]{
         font-family:'Inter','Segoe UI',system-ui,sans-serif;
         -webkit-font-smoothing:antialiased;
@@ -247,7 +227,6 @@ def load_css():
     ::-webkit-scrollbar-thumb:hover{background:var(--muted2)}
     .block-container{padding-top:1rem!important;padding-bottom:2rem!important;max-width:1400px!important;}
 
-    /* ── HERO ──────────────────────────────────────────────── */
     .hero{
         position:relative;
         background:linear-gradient(135deg,#050D1F 0%,#0F2040 35%,#1E3A8A 65%,#1D4ED8 100%);
@@ -311,7 +290,6 @@ def load_css():
     }
     .chip:hover{background:rgba(255,255,255,.20);transform:translateY(-1px);}
 
-    /* ── PAGE HEADER ───────────────────────────────────────── */
     .ph-hdr{
         display:flex;align-items:center;gap:1rem;
         background:var(--surface);
@@ -326,7 +304,6 @@ def load_css():
     .ph-title{font-size:1.3rem;font-weight:800;color:var(--blue);line-height:1.2;}
     .ph-sub{font-size:.8rem;color:var(--muted);margin-top:.15rem;}
 
-    /* ── SECTION TITLE ─────────────────────────────────────── */
     .stitle{
         display:flex;align-items:center;
         font-size:.88rem;font-weight:700;
@@ -339,7 +316,6 @@ def load_css():
         letter-spacing:.2px;
     }
 
-    /* ── CARD ──────────────────────────────────────────────── */
     .card{
         background:var(--surface);
         border-radius:var(--r-lg);
@@ -352,7 +328,6 @@ def load_css():
     .card:hover{box-shadow:var(--sh2);border-color:var(--blue-b);}
     .card-accent{border-top:3px solid var(--blue-l);}
 
-    /* ── UPLOAD ZONE ───────────────────────────────────────── */
     .uzone{
         background:linear-gradient(135deg,var(--blue-bg),#DBEAFE88);
         border:2px dashed #93C5FD;
@@ -365,7 +340,6 @@ def load_css():
     .uzone-title{font-weight:700;color:var(--blue);font-size:.9rem;margin-top:.2rem;}
     .uzone-sub{font-size:.75rem;color:var(--muted);margin-top:.15rem;}
 
-    /* ── STATUS BOXES ──────────────────────────────────────── */
     .sbox{
         padding:.7rem 1.1rem;border-radius:var(--r);
         font-size:.88rem;font-weight:500;margin:.4rem 0;
@@ -384,7 +358,6 @@ def load_css():
         border:1px solid #FECACA;border-left:3px solid var(--red);
     }
 
-    /* ── LABEL BADGE ───────────────────────────────────────── */
     .lbadge{
         display:inline-flex;align-items:center;gap:.35rem;
         background:var(--blue-m);color:#fff;
@@ -396,7 +369,6 @@ def load_css():
     .lbadge.amber{background:var(--amber);}
     .lbadge.green{background:var(--green-l);}
 
-    /* ── PILL ──────────────────────────────────────────────── */
     .ipill{
         display:inline-flex;align-items:center;gap:.35rem;
         background:var(--blue-bg);border:1px solid var(--blue-b);
@@ -405,13 +377,11 @@ def load_css():
         margin-bottom:.5rem;
     }
 
-    /* ── FIELD LABEL ───────────────────────────────────────── */
     .flabel{
         font-size:.76rem;font-weight:600;color:var(--muted);
         text-transform:uppercase;letter-spacing:.6px;margin-bottom:.3rem;
     }
 
-    /* ── EMPTY STATE ───────────────────────────────────────── */
     .empty{
         text-align:center;padding:3.5rem 1.5rem;
         color:var(--muted);border:2px dashed var(--border);
@@ -421,7 +391,6 @@ def load_css():
     .empty-title{font-size:1rem;font-weight:700;color:var(--muted2);margin-bottom:.3rem;}
     .empty-sub{font-size:.82rem;color:#CBD5E1;}
 
-    /* ── TABS ──────────────────────────────────────────────── */
     .stTabs [data-baseweb="tab-list"]{
         gap:3px;background:var(--bg);
         border-radius:var(--r-lg);
@@ -441,7 +410,6 @@ def load_css():
         box-shadow:var(--sh1)!important;
     }
 
-    /* ── BUTTONS ───────────────────────────────────────────── */
     .stButton>button{
         border-radius:var(--r)!important;font-weight:600!important;
         font-size:.86rem!important;letter-spacing:.1px;
@@ -463,7 +431,6 @@ def load_css():
         background:linear-gradient(135deg,#1D4ED8,var(--blue))!important;
     }
 
-    /* ── RADIO ─────────────────────────────────────────────── */
     div[data-testid="stRadio"]>div{gap:.5rem;}
     div[data-testid="stRadio"] label{
         background:var(--surface);
@@ -477,7 +444,6 @@ def load_css():
         background:var(--blue-bg);
     }
 
-    /* ── EXPANDER ──────────────────────────────────────────── */
     .streamlit-expanderHeader{
         font-weight:600;font-size:.88rem;color:var(--blue);
         background:var(--surface2);border-radius:8px;
@@ -488,7 +454,6 @@ def load_css():
         border-radius:var(--r)!important;
     }
 
-    /* ── METRICS ───────────────────────────────────────────── */
     [data-testid="metric-container"]{
         background:var(--surface);
         border:1px solid var(--border);
@@ -516,7 +481,6 @@ def load_css():
         letter-spacing:.5px;
     }
 
-    /* ── INPUTS ────────────────────────────────────────────── */
     .stTextInput input,.stNumberInput input{
         border-radius:var(--r)!important;
         border:1.5px solid var(--border)!important;
@@ -537,7 +501,6 @@ def load_css():
         box-shadow:var(--glow)!important;
     }
 
-    /* ── DATA TABLES ───────────────────────────────────────── */
     [data-testid="stDataFrame"],[data-testid="stDataEditor"]{
         border-radius:var(--r-lg)!important;
         border:1px solid var(--border)!important;
@@ -545,10 +508,8 @@ def load_css():
         box-shadow:var(--sh1)!important;
     }
 
-    /* ── DIVIDER ───────────────────────────────────────────── */
     hr{border:none;border-top:1px solid var(--border);margin:1rem 0;}
 
-    /* ── MASTERSAF COMPONENTS ──────────────────────────────── */
     .ms-log-area{
         background:#080D18;
         border:1px solid rgba(59,130,246,.15);
@@ -600,33 +561,14 @@ def load_css():
     }
     .ms-stat-sub{font-size:.72rem;color:var(--muted2);margin-top:.35rem;}
 
-    /* ── PROGRESS / ANIMATIONS ─────────────────────────────── */
-    @keyframes spin{to{transform:rotate(360deg)}}
-    .spinner{animation:spin 1.2s linear infinite;display:inline-block;}
-
-    @keyframes fadeUp{
-        from{opacity:0;transform:translateY(10px)}
-        to{opacity:1;transform:translateY(0)}
-    }
-    .fade-up{animation:fadeUp .3s ease forwards;}
-
-    @keyframes pulse-glow{
-        0%,100%{box-shadow:0 0 0 0 rgba(59,130,246,.4)}
-        50%{box-shadow:0 0 0 8px rgba(59,130,246,.0)}
-    }
-    .pulse{animation:pulse-glow 2s ease-in-out infinite;}
-
-    @keyframes shimmer{
-        0%{background-position:-200% 0}
-        100%{background-position:200% 0}
-    }
-    .skeleton{
-        background:linear-gradient(90deg,var(--border) 25%,var(--surface2) 50%,var(--border) 75%);
-        background-size:200% 100%;animation:shimmer 1.4s ease infinite;
-        border-radius:var(--r);height:1rem;
+    .auto-badge{
+        display:inline-flex;align-items:center;gap:.4rem;
+        background:var(--green-bg);color:#065F46;
+        border:1px solid #A7F3D0;border-radius:20px;
+        padding:.15rem .7rem;font-size:.7rem;
+        font-weight:600;letter-spacing:.2px;
     }
 
-    /* ── RESPONSIVE ────────────────────────────────────────── */
     @media(max-width:1024px){
         .ms-stat-grid{grid-template-columns:repeat(2,1fr);}
         .hero{padding:2rem 2rem 1.8rem;}
@@ -741,9 +683,6 @@ def processador_txt():
 # ==============================================================================
 # PARTE 2 — MASTERSAF AUTOMAÇÃO XML
 # ==============================================================================
-CTE_NAMESPACES = {'cte': 'http://www.portalfiscal.inf.br/cte'}
-
-
 class CTeProcessor:
     def __init__(self):
         self.processed_data = []
@@ -945,7 +884,7 @@ class CTeProcessor:
         }
 
 
-# ── FUNÇÕES DO WEBDRIVER ──────────────────────────────────────────
+# FUNÇÕES DO WEBDRIVER
 def get_chrome_version():
     for cmd in (['chromium', '--version'], ['google-chrome', '--version'],
                 ['google-chrome-stable', '--version']):
@@ -983,12 +922,6 @@ def get_driver(download_path):
     }
     opts.add_experimental_option("prefs", prefs)
 
-    # Estratégias em ordem de prioridade:
-    # 1. chromedriver do sistema (instalado pelo apt junto com chromium — VERSÃO COMPATÍVEL)
-    # 2. chromium-driver (nome alternativo no Debian/Ubuntu)
-    # 3. google-chrome + chromedriver padrão do PATH
-    # 4. chromium binary explícito
-    # NUNCA usar webdriver-manager: baixa ChromeDriver 114 para Chrome 136+ → crash
     for strategy in [
         lambda: _try_fixed_path(opts, '/usr/bin/chromedriver'),
         lambda: _try_fixed_path(opts, '/usr/lib/chromium/chromedriver'),
@@ -1002,7 +935,7 @@ def get_driver(download_path):
                 return drv
         except Exception:
             continue
-    raise RuntimeError("Nenhuma estratégia de ChromeDriver funcionou. Verifique se chromium e chromium-driver estão instalados via packages.txt.")
+    raise RuntimeError("Nenhuma estratégia de ChromeDriver funcionou.")
 
 def _try_fixed_path(opts, path):
     if not os.path.exists(path):
@@ -1044,7 +977,6 @@ def render_ms_log():
     ph('\n'.join(html_parts))
 
 
-# ── UI MASTERSAF AUTOMAÇÃO ────────────────────────────────────────
 def mastersaf_automacao():
     page_header("⚡", "MasterSAF — Automação XML",
                 "Download e processamento em massa de CT-es direto do portal")
@@ -1055,9 +987,6 @@ def mastersaf_automacao():
         "📥  Exportar Dados",
     ])
 
-    # ════════════════════════════════════════════════════════════
-    # TAB EXECUTAR
-    # ════════════════════════════════════════════════════════════
     with tab_exec:
         section_title("⚙️ Configuração da Automação")
         col_a, col_b = st.columns(2, gap="large")
@@ -1102,7 +1031,6 @@ def mastersaf_automacao():
                                     type="primary", **_WS)
                 ph('</div>')
 
-        # ── Execução ──────────────────────────────────────────
         if iniciar:
             if not usuario or not senha:
                 st.error("⚠️ Preencha o usuário e a senha para continuar.")
@@ -1319,9 +1247,6 @@ def mastersaf_automacao():
                     if dl_path and os.path.exists(dl_path):
                         shutil.rmtree(dl_path, ignore_errors=True)
 
-    # ════════════════════════════════════════════════════════════
-    # TAB RESULTADOS
-    # ════════════════════════════════════════════════════════════
     with tab_resultados:
         if st.session_state.ms_processed_data:
             df = pd.DataFrame(st.session_state.ms_processed_data)
@@ -1400,9 +1325,6 @@ def mastersaf_automacao():
             empty_state("📊", "Nenhum CT-e processado ainda",
                         "Execute a automação na aba 'Executar Automação' para ver os resultados")
 
-    # ════════════════════════════════════════════════════════════
-    # TAB EXPORTAR
-    # ════════════════════════════════════════════════════════════
     with tab_export:
         if st.session_state.ms_processed_data:
             df = pd.DataFrame(st.session_state.ms_processed_data)
@@ -1457,12 +1379,7 @@ def mastersaf_automacao():
 # PARTE 3 — PARSER EXTRATO DUIMP (HafelePDFParser)
 # ==============================================================================
 class HafelePDFParser:
-    """
-    Parser para o layout Extrato DUIMP (APP2 original).
-    Processa em lotes de _PDF_CHUNK_PAGES páginas.
-    Buffer residual limitado a _MAX_BUF_CHARS para evitar OOM.
-    """
-    _MAX_BUF_CHARS = 500_000  # ~500KB de texto — suficiente para qualquer item
+    _MAX_BUF_CHARS = 500_000
 
     def __init__(self):
         self.documento = {'cabecalho': {}, 'itens': [], 'totais': {}}
@@ -1510,9 +1427,7 @@ class HafelePDFParser:
                     items_found.extend(new_items)
                     del chunk_text, new_items
 
-                    # Proteção OOM: buffer residual não pode crescer infinitamente
                     if len(self._buffer) > self._MAX_BUF_CHARS:
-                        # Mantém apenas os últimos MAX_BUF_CHARS (dados recentes)
                         self._buffer = self._buffer[-self._MAX_BUF_CHARS:]
 
                     gc.collect()
@@ -1647,12 +1562,12 @@ class HafelePDFParser:
 
 
 # ==============================================================================
-# PARTE 3B — PARSER SIGRAWEB (layout novo e antigo - COM DETECÇÃO AUTOMÁTICA DE INVERSÃO)
+# PARTE 3B — PARSER SIGRAWEB (COM EXTRAÇÃO AUTOMÁTICA DA TABELA)
 # ==============================================================================
 class SigrawebPDFParser:
     """
     Parser para o layout Sigraweb — Conferência do Processo Detalhado.
-    Processa em lotes de _PDF_CHUNK_PAGES páginas.
+    Extrai automaticamente FOB, Valor Aduaneiro e Siscomex da tabela.
     """
 
     def __init__(self):
@@ -1672,7 +1587,87 @@ class SigrawebPDFParser:
         except Exception:
             return d.replace('/','').replace('-','')[:8]
 
-    _MAX_BUF_CHARS = 500_000  # ~500KB — proteção OOM
+    _MAX_BUF_CHARS = 500_000
+
+    # ═══════════════════════════════════════════════════════════════════════
+    # EXTRAI FOB, VALOR ADUANEIRO E SISCOMEX DA TABELA DO SIGRAWEB
+    # ═══════════════════════════════════════════════════════════════════════
+    def _extract_fob_aduaneiro_siscomex(self, p1: str, p2: str) -> Dict[str, str]:
+        """
+        Extrai os valores FOB, VALOR ADUANEIRO e SISCOMEX da tabela
+        "Despesas do Processo" e "Tributos" do Sigraweb.
+        """
+        combined = p1 + "\n" + p2
+        
+        def _e(pat, text, default='0'):
+            m = re.search(pat, text, re.IGNORECASE)
+            return m.group(1).strip().replace('.','').replace(',','.') if m else default
+        
+        # ── FOB (VALOR DÓLAR e VALOR REAL) ──────────────────────────────────
+        # Padrão da tabela: "FOB | 978 - EURO/COM.EUROPEIA | 25.726,77 | 29.827,53 | 151.049,58"
+        # Primeiro grupo: VALOR ORIG., Segundo: VALOR DÓLAR, Terceiro: VALOR REAL
+        fob_usd = _e(r'FOB\s+[\d]+\s*-\s*[A-Z\/\.]+\s+[\d\.,]+\s+([\d\.,]+)\s+[\d\.,]+', combined)
+        fob_brl = _e(r'FOB\s+[\d]+\s*-\s*[A-Z\/\.]+\s+[\d\.,]+\s+[\d\.,]+\s+([\d\.,]+)', combined)
+        
+        # Fallback para formato com parênteses
+        if fob_usd == '0':
+            fob_usd = _e(r'FOB\s*:.*?;\s*([\d\.,]+)\s*\(USD\)', combined)
+        if fob_brl == '0':
+            fob_brl = _e(r'FOB\s*:.*?\(USD\)\s*;\s*([\d\.,]+)\s*\(BRL\)', combined)
+        
+        # ── VALOR ADUANEIRO (VALOR DÓLAR e VALOR REAL) ─────────────────────
+        # Padrão da tabela: "VALOR ADUANEIRO | 30.678,35 | 155.358,21"
+        adu_usd = _e(r'VALOR ADUANEIRO\s+([\d\.,]+)\s+[\d\.,]+', combined)
+        adu_brl = _e(r'VALOR ADUANEIRO\s+[\d\.,]+\s+([\d\.,]+)', combined)
+        
+        # Fallback
+        if adu_usd == '0':
+            adu_usd = _e(r'VALOR ADUANEIRO\s*:\s*([\d\.,]+)\s*\(USD\)', combined)
+        if adu_brl == '0':
+            adu_brl = _e(r'VALOR ADUANEIRO\s*:.*?;\s*([\d\.,]+)\s*\(BRL\)', combined)
+        
+        # ── SISCOMEX (da tabela Tributos) ──────────────────────────────────
+        # Padrão: "II | IPI | PIS | COFINS | SISCOMEX | Banco | Agência | Conta"
+        # Captura o quinto número antes de "Itau"
+        siscomex = _e(r'[\d\.,]+\s+[\d\.,]+\s+[\d\.,]+\s+[\d\.,]+\s+([\d\.,]+)\s+Itau', p1)
+        
+        # Fallback
+        if siscomex == '0':
+            siscomex = _e(r'SISCOMEX\s*:\s*([\d\.,]+)', p1)
+        if siscomex == '0':
+            m = re.search(r'([\d\.,]+)\s+Itau\s+(\d+)\s+([\d\-]+)', p1, re.IGNORECASE)
+            if m:
+                siscomex = m.group(1).strip().replace('.','').replace(',','.')
+        
+        # ── Formata para 15 dígitos (padrão XML) ──────────────────────────
+        def _fmt(val):
+            if not val or val == '0':
+                return '000000000000000'
+            clean = re.sub(r'\D', '', str(val))
+            return clean.zfill(15) if clean else '000000000000000'
+        
+        result = {
+            'fobUSD': _fmt(fob_usd),
+            'fobBRL': _fmt(fob_brl),
+            'aduaneiroUSD': _fmt(adu_usd),
+            'aduaneiroBRL': _fmt(adu_brl),
+            'siscomex': _fmt(siscomex),
+        }
+        
+        # Armazena valores brutos para referência
+        self.documento['cabecalho']['_fobUSD_raw'] = fob_usd
+        self.documento['cabecalho']['_fobBRL_raw'] = fob_brl
+        self.documento['cabecalho']['_aduaneiroUSD_raw'] = adu_usd
+        self.documento['cabecalho']['_aduaneiroBRL_raw'] = adu_brl
+        self.documento['cabecalho']['_siscomex_raw'] = siscomex
+        
+        logger.info(f"FOB USD extraído: {fob_usd}")
+        logger.info(f"FOB BRL extraído: {fob_brl}")
+        logger.info(f"Aduaneiro USD extraído: {adu_usd}")
+        logger.info(f"Aduaneiro BRL extraído: {adu_brl}")
+        logger.info(f"Siscomex extraído: {siscomex}")
+        
+        return result
 
     def parse_pdf(self, pdf_path: str) -> Dict:
         try:
@@ -1687,6 +1682,7 @@ class SigrawebPDFParser:
 
                 p1 = pdf.pages[0].extract_text(layout=False) or "" if total > 0 else ""
                 p2 = pdf.pages[1].extract_text(layout=False) or "" if total > 1 else ""
+                
                 self._extract_header(p1, p2)
                 del p1, p2
 
@@ -1714,7 +1710,6 @@ class SigrawebPDFParser:
                     items_found.extend(new_items)
                     del chunk_text, new_items
 
-                    # Proteção OOM: buffer residual não pode crescer infinitamente
                     if len(buffer) > self._MAX_BUF_CHARS:
                         buffer = buffer[-self._MAX_BUF_CHARS:]
 
@@ -1771,8 +1766,9 @@ class SigrawebPDFParser:
 
     def _extract_header(self, p1: str, p2: str):
         def _f(pat, text, default=''):
-            m = re.search(pat, text)
+            m = re.search(pat, text, re.IGNORECASE)
             return m.group(1).strip() if m else default
+        
         h = {}
         h['numeroDI']       = _f(r'Número DI:\s*([\w]+)', p1)
         h['sigraweb']       = _f(r'SIGRAWEB:\s*([\w]+)', p1)
@@ -1780,10 +1776,10 @@ class SigrawebPDFParser:
         h['nomeImportador'] = _f(r'Nome da Empresa:\s*(.+?)(?:\n|CNPJ)', p1)
         dr = _f(r'Data Registro:([\d\-T:\.+]+)', p1)
         h['dataRegistro']   = dr[:10].replace('-','') if dr else ''
-        h['pesoBruto']      = _f(r'Peso Bruto:([\d\.,]+)', p1)
-        h['pesoLiquido']    = _f(r'Peso Líquido:([\d\.,]+)', p1)
-        h['volumes']        = _f(r'Volumes:([\d]+)', p1)
-        h['embalagem']      = _f(r'Embalagem:(\w+)', p1)
+        h['pesoBruto']      = _f(r'Peso Bruto:\s*([\d\.,]+)', p1)
+        h['pesoLiquido']    = _f(r'Peso Líquido:\s*([\d\.,]+)', p1)
+        h['volumes']        = _f(r'Volumes:\s*([\d]+)', p1)
+        h['embalagem']      = _f(r'Embalagem:\s*(\w+)', p1)
         h['urf']            = _f(r'URF de Entrada:\s*(\d+)', p1, '0917900')
         h['urfDespacho']    = _f(r'URF de Despacho:\s*(\d+)', p1, '0917900')
         h['modalidade']     = _f(r'Modalidade de Despacho:\s*(.+?)(?:\n)', p1, 'Normal')
@@ -1798,79 +1794,54 @@ class SigrawebPDFParser:
         h['idtMaster']      = _f(r'IDT\. Master:\s*([\w]+)', p1)
         h['transportador']  = _f(r'Transportador:\s*(.+?)(?:\n|Agente)', p1)
         h['agenteCarga']    = _f(r'Agente de Carga:\s*(.+?)(?:\n|CE)', p1)
+        
         combined = p1 + "\n" + p2
-
-        # ────────────────────────────────────────────────────────────────
-        # Despesas do Processo — FOB / Frete / Seguro / Valor Aduaneiro
-        # Layout original (em linha com parênteses): "FOB: 123 (EUR); 456 (USD)"
-        # ────────────────────────────────────────────────────────────────
+        
         h['taxaEUR']  = _f(r'Taxa EUR:\s*([\d\.,]+)', combined)
         h['taxaDolar']= _f(r'Taxa do Dólar:\s*([\d\.,]+)', combined)
-        h['fobEUR']   = _f(r'FOB:\s*([\d\.,]+)\s*\(EUR\)', combined)
-        h['fobUSD']   = _f(r'FOB:.*?\(EUR\)\s*;\s*([\d\.,]+)\s*\(USD\)', combined)
-        h['fobBRL']   = _f(r'FOB:.*?\(USD\);\s*([\d\.,]+)\s*\(BRL\)', combined)
         h['freteEUR'] = _f(r'Frete:\s*([\d\.,]+)\s*\(EUR\)', combined)
         h['freteUSD'] = _f(r'Frete:.*?\(EUR\)\s*;\s*([\d\.,]+)\s*\(USD\)', combined)
-        h['freteBRL'] = _f(r'Frete:.*?\(USD\);\s*([\d\.,]+)\s*\(BRL\)', combined)
+        h['freteBRL'] = _f(r'Frete:.*?\(USD\)\s*;\s*([\d\.,]+)\s*\(BRL\)', combined)
         h['seguroUSD']= _f(r'Seguro:\s*([\d\.,]+)\s*\(USD\)', combined)
         h['seguroBRL']= _f(r'Seguro:.*?;\s*([\d\.,]+)\s*\(BRL\)', combined)
         h['cifUSD']   = _f(r'CIF:\s*([\d\.,]+)\s*\(USD\)', combined)
         h['cifBRL']   = _f(r'CIF:.*?;\s*([\d\.,]+)\s*\(BRL\)', combined)
-        h['valorAduaneiroUSD'] = _f(r'Valor Aduaneiro:\s*([\d\.,]+)\s*\(USD\)', combined)
-        h['valorAduaneiroBRL'] = _f(r'Valor Aduaneiro:.*?;\s*([\d\.,]+)\s*\(BRL\)', combined)
-
-        # ────────────────────────────────────────────────────────────────
-        # NOVO — Fallback para layout em TABELA "Despesas do Processo"
-        # (DESPESA | MOEDA | VALOR ORIG. | VALOR DÓLAR | VALOR REAL)
-        # Cobre o extrato no padrão do print do usuário: linhas "FOB" e
-        # "VALOR ADUANEIRO" seguidas de números em sequência
-        # (valor orig., valor dólar, valor real).
-        # Só atua quando o padrão clássico acima (com parênteses) não
-        # encontrou nada — preserva 100% o comportamento já existente
-        # para o layout antigo em linha.
-        # ────────────────────────────────────────────────────────────────
-        if not h['fobUSD'] or not h['fobBRL']:
-            m_fob_tab = re.search(
-                r'FOB\b[^\n]*?([\d\.,]+)\s+([\d\.,]+)\s+([\d\.,]+)\s*\n',
-                combined, re.IGNORECASE)
-            if m_fob_tab:
-                if not h['fobEUR']: h['fobEUR'] = m_fob_tab.group(1)
-                if not h['fobUSD']: h['fobUSD'] = m_fob_tab.group(2)
-                if not h['fobBRL']: h['fobBRL'] = m_fob_tab.group(3)
-
-        if not h['valorAduaneiroUSD'] or not h['valorAduaneiroBRL']:
-            m_adu_tab = re.search(
-                r'VALOR\s+ADUANEIRO\b[^\n]*?([\d\.,]+)\s+([\d\.,]+)\s*\n',
-                combined, re.IGNORECASE)
-            if m_adu_tab:
-                if not h['valorAduaneiroUSD']: h['valorAduaneiroUSD'] = m_adu_tab.group(1)
-                if not h['valorAduaneiroBRL']: h['valorAduaneiroBRL'] = m_adu_tab.group(2)
-
+        
+        # Extrai dados da tabela de tributos
         tm = re.search(
             r'([\d\.,]+)\s+([\d\.,]+)\s+([\d\.,]+)\s+([\d\.,]+)\s+([\d\.,]+)'
             r'\s+Itau\s+(\d+)\s+([\d\-]+)',
-            p1)
+            p1, re.IGNORECASE)
         if tm:
-            h['totalII']=tm.group(1); h['totalIPI']=tm.group(2)
-            h['totalPIS']=tm.group(3); h['totalCOFINS']=tm.group(4)
-            h['totalSiscomex']=tm.group(5); h['banco']='Itau'
-            h['agencia']=tm.group(6); h['conta']=tm.group(7)
+            h['totalII']=tm.group(1).replace('.','').replace(',','.')
+            h['totalIPI']=tm.group(2).replace('.','').replace(',','.')
+            h['totalPIS']=tm.group(3).replace('.','').replace(',','.')
+            h['totalCOFINS']=tm.group(4).replace('.','').replace(',','.')
+            h['totalSiscomex']=tm.group(5).replace('.','').replace(',','.')
+            h['banco']='Itau'
+            h['agencia']=tm.group(6)
+            h['conta']=tm.group(7)
         else:
             h['totalII']=h['totalIPI']=h['totalPIS']=h['totalCOFINS']='0'
             h['totalSiscomex']='0'
             h['banco']  = _f(r'Banco:\s*(\w+)', p2, 'Itau')
             h['agencia']= _f(r'Agência:\s*([\d]+)', p2, '3715')
             h['conta']  = _f(r'Conta Corrente:\s*([\w\-]+)', p2, '')
-
-        # NOVO — Fallback: SISCOMEX isolado na tabela "Tributos"
-        # (II | IPI | PIS | COFINS | SISCOMEX | Banco | Agência | Conta)
-        if not h.get('totalSiscomex') or h['totalSiscomex'] == '0':
-            m_sis = re.search(r'SISCOMEX\D{0,30}?([\d\.,]+)', combined, re.IGNORECASE)
-            if m_sis:
-                h['totalSiscomex'] = m_sis.group(1)
-
+        
         h['dataEmbarqueISO'] = self._fmt_date(h['dataEmbarque']) if h['dataEmbarque'] else ''
         h['dataChegadaISO']  = self._fmt_date(h['dataChegada'])  if h['dataChegada']  else ''
+        
+        # ═══════════════════════════════════════════════════════════════════
+        # EXTRAÇÃO AUTOMÁTICA: FOB, Valor Aduaneiro e Siscomex da tabela
+        # ═══════════════════════════════════════════════════════════════════
+        extracted = self._extract_fob_aduaneiro_siscomex(p1, p2)
+        
+        h['fobUSD'] = extracted['fobUSD']
+        h['fobBRL'] = extracted['fobBRL']
+        h['valorAduaneiroUSD'] = extracted['aduaneiroUSD']
+        h['valorAduaneiroBRL'] = extracted['aduaneiroBRL']
+        h['siscomex'] = extracted['siscomex']
+        
         self.documento['cabecalho'] = h
 
     def _parse_item_block(self, num_str: str, text: str) -> Optional[Dict]:
@@ -1893,7 +1864,6 @@ class SigrawebPDFParser:
             }
             m = re.search(r'NR NCM:\s*(\d+)', text)
             if m: item['ncm'] = m.group(1)
-            
             m = re.search(
                 r'Part Number:\s*([\S]+)\s*\|\s*Descrição:\s*(.+?)(?=\nFabricante:|$)',
                 text, re.DOTALL)
@@ -1901,27 +1871,8 @@ class SigrawebPDFParser:
                 item['codigo_interno'] = m.group(1).strip()
                 item['descricao']      = re.sub(r'\s+',' ', m.group(2).strip())
             else:
-                # ==============================================================
-                # CORREÇÃO DE INVERSÃO DE LAYOUT AQUI!
-                # Lógica profissional: Se o Detalhamento começa com LETRA, invertemos.
-                # ==============================================================
-                m_detalhe = re.search(r'Detalhamento do Produto:\s*(.+?)(?=\n|Descrição complementar|$)', text, re.DOTALL)
-                m_desc = re.search(r'Descrição complementar da mercadoria:\s*(.+?)(?=\n|$)', text, re.DOTALL)
-                
-                detalhe_raw = m_detalhe.group(1).strip() if m_detalhe else ""
-                desc_raw = m_desc.group(1).strip() if m_desc else ""
-
-                # Verifica se o Detalhamento começa com letra (layout novo invertido)
-                if detalhe_raw and re.match(r'^[A-Za-z]', detalhe_raw):
-                    # Está invertido! Detalhamento é a descrição, Desc. Complementar é o código
-                    item['codigo_interno'] = desc_raw
-                    item['descricao'] = detalhe_raw
-                else:
-                    # Layout normal
-                    item['codigo_interno'] = detalhe_raw
-                    item['descricao'] = desc_raw
-                # ==============================================================
-
+                m2 = re.search(r'Descrição:\s*(.+?)(?=\nFabricante:|$)', text, re.DOTALL)
+                if m2: item['descricao'] = re.sub(r'\s+',' ', m2.group(1).strip())
             m = re.search(r'Peso Líquido:\s*([\d\.,]+)', text)
             if m: item['pesoLiq'] = m.group(1)
             m = re.search(r'Qnt\. Estatística:\s*([\d\.,]+)', text)
@@ -2025,23 +1976,12 @@ def montar_descricao_final(desc_complementar, codigo_extra, detalhamento):
 
 
 class DuimpPDFParser:
-    """
-    Parser de DUIMP com processamento STREAMING — nunca acumula o texto
-    completo na memória. Extrai cabeçalho e itens página a página,
-    mantendo apenas um buffer residual mínimo entre chunks.
-    """
-
     def __init__(self, pdf_path: str):
         self.pdf_path = pdf_path
-        # full_text REMOVIDO — substituído por processamento streaming
         self.header   = {}
         self.items    = []
-        # Buffer interno usado APENAS durante parse (liberado ao final)
         self._buf     = ""
 
-    # ------------------------------------------------------------------
-    # Filtra uma linha do PDF (remove ruído de paginação)
-    # ------------------------------------------------------------------
     @staticmethod
     def _filter(line: str) -> bool:
         ls = line.strip()
@@ -2051,16 +1991,7 @@ class DuimpPDFParser:
         if re.match(r'^\d+\s*/\s*\d+$', ls):          return False
         return True
 
-    # ------------------------------------------------------------------
-    # preprocess() + extract_header() + extract_items() fundidos em um
-    # único passo streaming — lê, filtra, extrai e descarta por chunk.
-    # ------------------------------------------------------------------
     def preprocess(self):
-        """
-        Lê o PDF em blocos de _PDF_CHUNK_PAGES páginas.
-        Extrai cabeçalho das primeiras páginas e itens incrementalmente.
-        NUNCA mantém o texto completo em memória simultaneamente.
-        """
         prog_txt = st.empty()
         prog_bar = st.progress(0)
         doc      = fitz.open(self.pdf_path)
@@ -2072,24 +2003,21 @@ class DuimpPDFParser:
             prog_txt.text(f"Processando páginas {start+1}–{end} de {total} (DUIMP)...")
             prog_bar.progress(end / total)
 
-            # Extrai texto do chunk e filtra linhas de ruído
             lines = []
             for idx in range(start, end):
                 page = doc[idx]
                 for line in page.get_text("text").split('\n'):
                     if self._filter(line):
                         lines.append(line)
-                page = None   # libera objeto página imediatamente
+                page = None
 
             chunk_text = "\n".join(lines)
             del lines
             gc.collect()
 
-            # Extrai cabeçalho apenas das primeiras páginas (chunk 0)
             if start == 0 and not self.header:
                 self._extract_header_from_chunk(chunk_text)
 
-            # Extrai itens incrementalmente com buffer residual
             self._buf, new_items = self._extract_items_streaming(
                 self._buf + chunk_text, is_last=(end == total)
             )
@@ -2102,25 +2030,19 @@ class DuimpPDFParser:
         prog_txt.empty()
         prog_bar.empty()
 
-        # Processa qualquer residual final
         if self._buf.strip():
             _, remaining = self._extract_items_streaming(self._buf, is_last=True)
             self.items.extend(remaining)
 
-        self._buf = ""  # libera buffer
+        self._buf = ""
         gc.collect()
 
     def extract_header(self):
-        """Compatibilidade — cabeçalho já extraído em preprocess()."""
-        pass  # já feito no streaming
+        pass
 
     def extract_items(self):
-        """Compatibilidade — itens já extraídos em preprocess()."""
-        pass  # já feito no streaming
+        pass
 
-    # ------------------------------------------------------------------
-    # Extração de cabeçalho a partir de um bloco de texto
-    # ------------------------------------------------------------------
     def _extract_header_from_chunk(self, text: str):
         self.header["numeroDUIMP"]    = self._r(r"Extrato da Duimp\s+([\w\-\/]+)", text)
         self.header["cnpj"]           = self._r(r"CNPJ do importador:\s*([\d\.\/\-]+)", text)
@@ -2130,15 +2052,7 @@ class DuimpPDFParser:
         self.header["urf"]            = self._r(r"Unidade de despacho:\s*([\d]+)", text)
         self.header["paisProcedencia"]= self._r(r"País de Procedência:\s*\n?(.+)", text)
 
-    # ------------------------------------------------------------------
-    # Extração streaming de itens — retorna (buffer_residual, [itens])
-    # ------------------------------------------------------------------
     def _extract_items_streaming(self, text: str, is_last: bool):
-        """
-        Divide o texto pelo padrão 'Item N', processa os blocos completos
-        e retorna o bloco final incompleto como buffer para o próximo chunk.
-        Nunca guarda mais do que um bloco de item por vez na memória.
-        """
         parts = re.split(r"Item\s+(\d+)", text)
         items_found = []
 
@@ -2146,8 +2060,6 @@ class DuimpPDFParser:
             residual = "" if is_last else text
             return residual, items_found
 
-        # Quantos blocos podemos processar com segurança
-        # Se não é último chunk, o último bloco pode estar incompleto
         n_safe = len(parts) - 1 if not is_last else len(parts)
 
         for i in range(1, n_safe, 2):
@@ -2156,10 +2068,8 @@ class DuimpPDFParser:
             item    = self._parse_item_block(num, content)
             if item:
                 items_found.append(item)
-            # Libera conteúdo do bloco imediatamente após parsear
             parts[i + 1] = ""
 
-        # Buffer residual = último bloco incompleto
         if not is_last and len(parts) >= 2:
             last_num     = parts[-2] if len(parts) % 2 == 0 else ""
             last_content = parts[-1]
@@ -2170,9 +2080,6 @@ class DuimpPDFParser:
         del parts
         return residual, items_found
 
-    # ------------------------------------------------------------------
-    # Parseia um bloco de item individual
-    # ------------------------------------------------------------------
     def _parse_item_block(self, num: str, content: str) -> Optional[Dict]:
         item = {"numeroAdicao": num.strip()}
         item["ncm"]                  = self._r(r"NCM:\s*([\d\.]+)", content)
@@ -2763,9 +2670,6 @@ def sistema_integrado_duimp():
         "💾  Exportar XML",
     ])
 
-    # ══════════════════════════════════════════════════════════════════════
-    # TAB 1 — UPLOAD & VINCULAÇÃO
-    # ══════════════════════════════════════════════════════════════════════
     with tab_up:
         section_title("⚙️ Formato do Arquivo de Tributos (APP2)")
         col_radio, col_badge = st.columns([3, 1], gap="large")
@@ -2936,9 +2840,6 @@ def sistema_integrado_duimp():
                     st.session_state[k] = None
                 st.rerun()
 
-    # ══════════════════════════════════════════════════════════════════════
-    # TAB 2 — CONFERÊNCIA
-    # ══════════════════════════════════════════════════════════════════════
     with tab_conf:
         section_title("📋 Conferência e Edição")
 
@@ -3054,7 +2955,7 @@ def sistema_integrado_duimp():
                         "Carregue os arquivos e execute a vinculação na aba Upload")
 
     # ══════════════════════════════════════════════════════════════════════
-    # TAB 3 — EXPORTAR XML
+    # TAB 3 — EXPORTAR XML (COM PREENCHIMENTO AUTOMÁTICO)
     # ══════════════════════════════════════════════════════════════════════
     with tab_xml:
         section_title("⚙️ Configurações do XML Final (Layout 8686)")
@@ -3064,15 +2965,41 @@ def sistema_integrado_duimp():
                 st.session_state["layout_app2"] == "sigraweb"):
             cab_sgw = st.session_state["parsed_sigraweb"].get("cabecalho",{})
 
-        # ──────────────────────────────────────────────────────────────────
-        # Helper local — converte valor monetário (string "1.234,56" ou número)
-        # lido do PDF Sigraweb para o formato fiscal de 15 dígitos (×100)
-        # usado em todo o XML. Mantém "000000000000000" quando não há valor,
-        # preservando o comportamento original quando o PDF não traz o dado.
-        # ──────────────────────────────────────────────────────────────────
-        def _cab_to_fiscal(campo: str) -> str:
-            v = cab_sgw.get(campo)
-            return DataFormatter.format_input_fiscal(v) if v else "000000000000000"
+        # ═══════════════════════════════════════════════════════════════════
+        # OBTÉM OS VALORES EXTRAÍDOS AUTOMATICAMENTE DO SIGRAWEB
+        # ═══════════════════════════════════════════════════════════════════
+        def _get_extracted_value(cab, key, default='000000000000000'):
+            val = cab.get(key, '0')
+            if val and val != '0' and val != '000000000000000':
+                if len(str(val)) == 15 and str(val).isdigit():
+                    return str(val)
+                clean = re.sub(r'\D', '', str(val))
+                return clean.zfill(15) if clean else default
+            return default
+
+        fob_usd_auto = _get_extracted_value(cab_sgw, 'fobUSD')
+        fob_brl_auto = _get_extracted_value(cab_sgw, 'fobBRL')
+        adu_usd_auto = _get_extracted_value(cab_sgw, 'valorAduaneiroUSD')
+        adu_brl_auto = _get_extracted_value(cab_sgw, 'valorAduaneiroBRL')
+        siscomex_auto = _get_extracted_value(cab_sgw, 'siscomex')
+
+        has_auto_values = (
+            fob_usd_auto != '000000000000000' or
+            fob_brl_auto != '000000000000000' or
+            adu_usd_auto != '000000000000000' or
+            adu_brl_auto != '000000000000000' or
+            siscomex_auto != '000000000000000'
+        )
+
+        if has_auto_values:
+            ph("""
+            <div class="sbox sbox-ok" style="margin-bottom:1rem;">
+                ✅ Valores extraídos automaticamente do PDF Sigraweb
+                <span style="font-size:0.75rem;font-weight:400;margin-left:0.5rem;">
+                    (FOB, Valor Aduaneiro e Siscomex)
+                </span>
+            </div>
+            """)
 
         with st.expander("📅 Datas, Pesos e Locais", expanded=True):
             xc1, xc2, xc3 = st.columns(3, gap="large")
@@ -3090,22 +3017,45 @@ def sistema_integrado_duimp():
                 _pl = DataFormatter.format_quantity(cab_sgw.get('pesoLiquido','0'),15) if cab_sgw.get('pesoLiquido') else '000000000000000'
                 inp_pb  = st.text_input("Peso Bruto (XML)",   value=_pb)
                 inp_pl  = st.text_input("Peso Líquido (XML)", value=_pl)
+                
                 st.markdown("**Locais (R$ / US$)**")
-                # ── Descarga = VALOR ADUANEIRO (Dólar / Real) lido do Sigraweb ──
-                inp_ldd = st.text_input("Descarga US$", value=_cab_to_fiscal('valorAduaneiroUSD'))
-                inp_ldr = st.text_input("Descarga R$",  value=_cab_to_fiscal('valorAduaneiroBRL'))
-                # ── Embarque = FOB (Dólar / Real) lido do Sigraweb ──
-                inp_led = st.text_input("Embarque US$", value=_cab_to_fiscal('fobUSD'))
-                inp_ler = st.text_input("Embarque R$",  value=_cab_to_fiscal('fobBRL'))
+                # ═══════════════════════════════════════════════════════════
+                # PREENCHIMENTO AUTOMÁTICO:
+                # Descarga US$ ← Valor Aduaneiro USD
+                # Descarga R$  ← Valor Aduaneiro BRL
+                # Embarque US$ ← FOB USD
+                # Embarque R$  ← FOB BRL
+                # ═══════════════════════════════════════════════════════════
+                inp_ldd = st.text_input("Descarga US$", value=adu_usd_auto)
+                inp_ldr = st.text_input("Descarga R$",  value=adu_brl_auto)
+                inp_led = st.text_input("Embarque US$", value=fob_usd_auto)
+                inp_ler = st.text_input("Embarque R$",  value=fob_brl_auto)
+                
+                if has_auto_values:
+                    ph("""
+                    <div style="font-size:0.7rem;color:var(--muted);margin-top:0.25rem;">
+                        ⚡ Valores preenchidos automaticamente do PDF Sigraweb
+                    </div>
+                    """)
             with xc3:
                 st.markdown("**Pagamento & Conhecimento**")
                 inp_ag  = st.text_input("Agência",         value=cab_sgw.get('agencia','3715') or '3715')
                 inp_bco = st.text_input("Banco",           value="341")
                 inp_idc = st.text_input("IDT Conhecimento",value=cab_sgw.get('idtConhecimento','CE123456') or 'CE123456')
                 inp_idm = st.text_input("IDT Master",      value=cab_sgw.get('idtMaster','CE123456') or 'CE123456')
+                
                 st.markdown("**Receita 7811**")
-                # ── Valor 7811 = SISCOMEX lido do Sigraweb ──
-                inp_r78 = st.text_input("Valor 7811", value=_cab_to_fiscal('totalSiscomex'))
+                # ═══════════════════════════════════════════════════════════
+                # PREENCHIMENTO AUTOMÁTICO: Valor 7811 ← Siscomex
+                # ═══════════════════════════════════════════════════════════
+                inp_r78 = st.text_input("Valor 7811", value=siscomex_auto)
+                
+                if siscomex_auto != '000000000000000':
+                    ph("""
+                    <div style="font-size:0.7rem;color:var(--muted);margin-top:0.25rem;">
+                        ⚡ Valor preenchido automaticamente do PDF Sigraweb
+                    </div>
+                    """)
 
         user_xml = {
             "quantidadeVolume":              inp_vol,
