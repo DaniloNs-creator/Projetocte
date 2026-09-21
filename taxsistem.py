@@ -1191,8 +1191,8 @@ def modulo_mastersaf():
                     driver = get_driver(dl_path)
 
                     status_box.info("🔑 Autenticando no MasterSAF...")
-                    add_ms_log("🔗 Acessando https://p.dfe.mastersaf.com.br/mvc/login", 'info')
-                    driver.get("https://p.dfe.mastersaf.com.br/mvc/login")
+                    add_ms_log("🔗 Acessando https://prod01.dfe.thomsonreuters.com/portal/mvc/login", 'info')
+                    driver.get("https://prod01.dfe.thomsonreuters.com/portal/mvc/login")
                     time.sleep(3)
 
                     driver.find_element(By.XPATH, '//*[@id="nomeusuario"]').send_keys(usuario)
