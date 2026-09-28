@@ -8,7 +8,8 @@ Versão: 6.0 - COMPLETA com correção do erro startswith
 Sistema unificado com os módulos:
   1. Processador de Arquivos TXT
   2. MasterSAF Automação — Download e processamento de CT-es
-  3. Catálogo Siscomex — Conversor JSON <-> Excel
+  3. SISCOMEX — Catálogo de Produtos, Operador Estrangeiro e Vínculos
+     Fabricante/Produtor a Produto (conversor JSON <-> Excel)
 ==================================================================================
 """
 
@@ -715,8 +716,8 @@ def pagina_home():
             </a>
             <a href="?modulo=siscomex" class="home-card">
                 <span class="icon">🌐</span>
-                <div class="name">Catálogo Siscomex</div>
-                <div class="desc">Conversor JSON ⇄ Excel do Catálogo de Itens</div>
+                <div class="name">SISCOMEX</div>
+                <div class="desc">Produtos, Operador Estrangeiro e Vínculos — JSON ⇄ Excel</div>
             </a>
         </div>
     </div>
@@ -1937,7 +1938,8 @@ def ler_json_upload(arquivo) -> list[dict]:
     return dados
 
 
-def dataframe_para_excel_bytes(df: pd.DataFrame) -> bytes:
+def dataframe_para_excel_bytes(df: pd.DataFrame, colunas_lista_json: list | None = None) -> bytes:
+    colunas_lista_json = COLUNAS_LISTA_JSON if colunas_lista_json is None else colunas_lista_json
     buffer = io.BytesIO()
     with pd.ExcelWriter(buffer, engine="xlsxwriter") as writer:
         df.to_excel(writer, index=False, sheet_name="Catalogo")
@@ -1950,9 +1952,9 @@ def dataframe_para_excel_bytes(df: pd.DataFrame) -> bytes:
         for col_idx, col_name in enumerate(df.columns):
             worksheet.write(0, col_idx, col_name, header_fmt)
             largura = 18
-            if col_name in ("descricao", "denominacao"):
+            if col_name in ("descricao", "denominacao", "nome", "logradouro"):
                 largura = 45
-            elif col_name in COLUNAS_LISTA_JSON:
+            elif col_name in colunas_lista_json:
                 largura = 35
             worksheet.set_column(col_idx, col_idx, largura)
 
@@ -1976,26 +1978,538 @@ def json_bytes(itens: list[dict]) -> bytes:
 
 
 # ---------------------------------------------------------------------------
+# Catálogo "Operador Estrangeiro" — mesmo mecanismo de conversão/lotes do
+# Catálogo de Produtos acima, adaptado ao schema oficial do endpoint de
+# Operador Estrangeiro (documentação Receita Federal / Siscomex).
+# ---------------------------------------------------------------------------
+
+COLUNAS_SIMPLES_OE = [
+    "seq",
+    "cpfCnpjRaiz",
+    "codigo",
+    "versao",
+    "tin",
+    "nome",
+    "situacao",
+    "logradouro",
+    "nomeCidade",
+    "codigoSubdivisaoPais",
+    "codigoPais",
+    "cep",
+    "codigoInterno",
+    "email",
+    "dataReferencia",
+]
+COLUNAS_LISTA_JSON_OE = ["identificacoesAdicionais"]
+TODAS_COLUNAS_OE = COLUNAS_SIMPLES_OE + COLUNAS_LISTA_JSON_OE
+
+# 'codigo' e 'versao' são atribuídos pelo Siscomex ("utilizado somente para
+# retorno de valor" na documentação oficial) — por isso não geram erro de
+# campo obrigatório quando vierem vazios (útil para cadastrar um operador
+# novo, que ainda não tem código).
+CAMPOS_OMITIVEIS_SE_VAZIOS_OE = {
+    "codigo", "versao", "tin", "situacao", "codigoSubdivisaoPais",
+    "cep", "codigoInterno", "email", "dataReferencia",
+}
+
+SITUACOES_VALIDAS_OE = {"ATIVADO", "DESATIVADO"}
+
+LIMITES_TAMANHO_OE = {
+    "codigo": 35,
+    "versao": 8,
+    "tin": 35,
+    "nome_min": 1, "nome_max": 150,
+    "logradouro_min": 1, "logradouro_max": 70,
+    "nomeCidade_min": 1, "nomeCidade_max": 35,
+    "codigoSubdivisaoPais": 6,
+    "cep": 9,
+    "codigoInterno": 35,
+    "email": 70,
+    "identificacao_numero": 35,
+    "identificacao_codigo": 3,
+}
+
+
+def json_para_dataframe_oe(itens: list[dict], progress_cb=None) -> ResultadoConversao:
+    """Igual a json_para_dataframe(), mas para o schema do Operador
+    Estrangeiro: 'identificacoesAdicionais' vira coluna com o JSON cru."""
+    resultado = ResultadoConversao()
+    linhas = []
+    total = len(itens)
+
+    for i, item in enumerate(itens):
+        if not isinstance(item, dict):
+            resultado.avisos.append(f"Item na posição {i} ignorado: não é um objeto JSON válido.")
+            continue
+
+        linha = {c: _valor_ou_vazio(item, c) for c in COLUNAS_SIMPLES_OE}
+        ident = item.get("identificacoesAdicionais", [])
+        linha["identificacoesAdicionais"] = json.dumps(ident, ensure_ascii=False) if ident else ""
+        linhas.append(linha)
+
+        if progress_cb and total:
+            progress_cb((i + 1) / total)
+
+    resultado.dataframe = pd.DataFrame(linhas, columns=TODAS_COLUNAS_OE)
+    resultado.total_itens = len(linhas)
+    return resultado
+
+
+def dataframe_para_json_oe(df: pd.DataFrame, progress_cb=None) -> tuple[list[dict], list[str], list[str]]:
+    """Igual a dataframe_para_json(), mas para o schema do Operador
+    Estrangeiro."""
+    avisos: list[str] = []
+    erros: list[str] = []
+    itens: list[dict] = []
+    total = len(df)
+
+    faltando = [c for c in TODAS_COLUNAS_OE if c not in df.columns]
+    if faltando:
+        avisos.append(
+            "Colunas ausentes na planilha (serão omitidas/consideradas vazias): "
+            + ", ".join(faltando)
+        )
+
+    for i, row in enumerate(df.itertuples(index=False), start=0):
+        row_dict = dict(zip(df.columns, row))
+        item: dict[str, Any] = {}
+
+        for campo in COLUNAS_SIMPLES_OE:
+            valor = row_dict.get(campo, "")
+            if pd.isna(valor):
+                valor = "" if campo != "seq" else None
+            if campo == "seq":
+                try:
+                    valor = int(valor) if valor not in ("", None) else None
+                except (ValueError, TypeError):
+                    erros.append(f"Linha {i + 2}: valor inválido em 'seq' -> {valor!r}")
+            if campo in CAMPOS_OMITIVEIS_SE_VAZIOS_OE and valor in ("", None):
+                continue
+            item[campo] = valor
+
+        bruto = row_dict.get("identificacoesAdicionais", "")
+        if pd.isna(bruto) or bruto == "":
+            item["identificacoesAdicionais"] = []
+        else:
+            try:
+                item["identificacoesAdicionais"] = json.loads(bruto)
+            except (json.JSONDecodeError, TypeError) as e:
+                erros.append(f"Linha {i + 2}: JSON inválido na coluna 'identificacoesAdicionais' -> {e}")
+                item["identificacoesAdicionais"] = []
+
+        itens.append(item)
+
+        if progress_cb and total:
+            progress_cb((i + 1) / total)
+
+    return itens, avisos, erros
+
+
+def _valida_identificacoes_adicionais(lista: list, numero_linha: int) -> list[str]:
+    erros = []
+    for j, entrada in enumerate(lista):
+        if not isinstance(entrada, dict) or "numero" not in entrada or "codigo" not in entrada:
+            erros.append(f"Linha {numero_linha}: 'identificacoesAdicionais[{j}]' deve ter 'numero' e 'codigo'.")
+            continue
+        if not (1 <= len(str(entrada["numero"])) <= LIMITES_TAMANHO_OE["identificacao_numero"]):
+            erros.append(f"Linha {numero_linha}: 'identificacoesAdicionais[{j}].numero' fora do tamanho 1-35.")
+        if not (1 <= len(str(entrada["codigo"])) <= LIMITES_TAMANHO_OE["identificacao_codigo"]):
+            erros.append(f"Linha {numero_linha}: 'identificacoesAdicionais[{j}].codigo' fora do tamanho 1-3.")
+    return erros
+
+
+def validar_e_preparar_item_envio_oe(item: dict, numero_linha: int) -> ItemEnvio:
+    """Valida um item do Operador Estrangeiro contra o schema oficial e
+    monta o dicionário pronto para envio. 'seq' fica como placeholder
+    (renumerado depois, por lote)."""
+    resultado = ItemEnvio(numero_linha=numero_linha, seq_original=item.get("seq"), item_pronto=None)
+    erros, avisos = resultado.erros, resultado.avisos
+    pronto: dict[str, Any] = {}
+
+    if item.get("seq") in (None, ""):
+        erros.append(f"Linha {numero_linha}: 'seq' ausente.")
+
+    cpf_cnpj = re.sub(r"\D", "", str(item.get("cpfCnpjRaiz", "")))
+    if len(cpf_cnpj) not in (8, 11) and cpf_cnpj:
+        if len(cpf_cnpj) < 8:
+            avisos.append(
+                f"Linha {numero_linha}: 'cpfCnpjRaiz' tinha {len(cpf_cnpj)} dígito(s) "
+                f"(provável perda de zero à esquerda) — completado para 8 dígitos."
+            )
+            cpf_cnpj = cpf_cnpj.zfill(8)
+        else:
+            erros.append(f"Linha {numero_linha}: 'cpfCnpjRaiz' deve ter 8 ou 11 dígitos (tem {len(cpf_cnpj)}).")
+    if not cpf_cnpj:
+        erros.append(f"Linha {numero_linha}: 'cpfCnpjRaiz' ausente.")
+    else:
+        pronto["cpfCnpjRaiz"] = cpf_cnpj
+
+    codigo = item.get("codigo", "")
+    if codigo:
+        if len(str(codigo)) > LIMITES_TAMANHO_OE["codigo"]:
+            erros.append(f"Linha {numero_linha}: 'codigo' excede {LIMITES_TAMANHO_OE['codigo']} caracteres.")
+        else:
+            pronto["codigo"] = str(codigo)
+
+    versao = item.get("versao", "")
+    if versao:
+        if len(str(versao)) > LIMITES_TAMANHO_OE["versao"]:
+            erros.append(f"Linha {numero_linha}: 'versao' excede {LIMITES_TAMANHO_OE['versao']} caracteres.")
+        else:
+            pronto["versao"] = str(versao)
+
+    tin = item.get("tin", "")
+    if tin:
+        if len(str(tin)) > LIMITES_TAMANHO_OE["tin"]:
+            erros.append(f"Linha {numero_linha}: 'tin' excede {LIMITES_TAMANHO_OE['tin']} caracteres.")
+        else:
+            pronto["tin"] = str(tin)
+
+    nome = str(item.get("nome", ""))
+    if not (LIMITES_TAMANHO_OE["nome_min"] <= len(nome) <= LIMITES_TAMANHO_OE["nome_max"]):
+        erros.append(
+            f"Linha {numero_linha}: 'nome' deve ter entre {LIMITES_TAMANHO_OE['nome_min']} e "
+            f"{LIMITES_TAMANHO_OE['nome_max']} caracteres (tem {len(nome)})."
+        )
+    pronto["nome"] = nome
+
+    situacao_raw = str(item.get("situacao", "")).strip()
+    if situacao_raw:
+        situacao = situacao_raw.upper()
+        if situacao != situacao_raw:
+            avisos.append(f"Linha {numero_linha}: 'situacao' normalizada para maiúsculas ('{situacao}').")
+        if situacao not in SITUACOES_VALIDAS_OE:
+            erros.append(f"Linha {numero_linha}: 'situacao' deve ser um de {sorted(SITUACOES_VALIDAS_OE)} (veio {item.get('situacao')!r}).")
+        else:
+            pronto["situacao"] = situacao
+
+    logradouro = str(item.get("logradouro", ""))
+    if not (LIMITES_TAMANHO_OE["logradouro_min"] <= len(logradouro) <= LIMITES_TAMANHO_OE["logradouro_max"]):
+        erros.append(
+            f"Linha {numero_linha}: 'logradouro' deve ter entre {LIMITES_TAMANHO_OE['logradouro_min']} e "
+            f"{LIMITES_TAMANHO_OE['logradouro_max']} caracteres (tem {len(logradouro)})."
+        )
+    pronto["logradouro"] = logradouro
+
+    nome_cidade = str(item.get("nomeCidade", ""))
+    if not (LIMITES_TAMANHO_OE["nomeCidade_min"] <= len(nome_cidade) <= LIMITES_TAMANHO_OE["nomeCidade_max"]):
+        erros.append(
+            f"Linha {numero_linha}: 'nomeCidade' deve ter entre {LIMITES_TAMANHO_OE['nomeCidade_min']} e "
+            f"{LIMITES_TAMANHO_OE['nomeCidade_max']} caracteres (tem {len(nome_cidade)})."
+        )
+    pronto["nomeCidade"] = nome_cidade
+
+    subdivisao = str(item.get("codigoSubdivisaoPais", "")).strip().upper()
+    if subdivisao:
+        if len(subdivisao) > LIMITES_TAMANHO_OE["codigoSubdivisaoPais"]:
+            erros.append(f"Linha {numero_linha}: 'codigoSubdivisaoPais' excede {LIMITES_TAMANHO_OE['codigoSubdivisaoPais']} caracteres.")
+        else:
+            pronto["codigoSubdivisaoPais"] = subdivisao
+
+    pais = str(item.get("codigoPais", "")).strip().upper()
+    if len(pais) != 2:
+        erros.append(f"Linha {numero_linha}: 'codigoPais' deve ter exatamente 2 caracteres (veio {item.get('codigoPais')!r}).")
+    pronto["codigoPais"] = pais
+
+    cep = str(item.get("cep", "")).strip()
+    if cep:
+        if len(cep) > LIMITES_TAMANHO_OE["cep"]:
+            erros.append(f"Linha {numero_linha}: 'cep' excede {LIMITES_TAMANHO_OE['cep']} caracteres.")
+        else:
+            pronto["cep"] = cep
+
+    cod_interno = str(item.get("codigoInterno", "")).strip()
+    if cod_interno:
+        if len(cod_interno) > LIMITES_TAMANHO_OE["codigoInterno"]:
+            erros.append(f"Linha {numero_linha}: 'codigoInterno' excede {LIMITES_TAMANHO_OE['codigoInterno']} caracteres.")
+        else:
+            pronto["codigoInterno"] = cod_interno
+
+    email = str(item.get("email", "")).strip()
+    if email:
+        if len(email) > LIMITES_TAMANHO_OE["email"]:
+            erros.append(f"Linha {numero_linha}: 'email' excede {LIMITES_TAMANHO_OE['email']} caracteres.")
+        else:
+            if "@" not in email:
+                avisos.append(f"Linha {numero_linha}: 'email' não parece válido ('{email}').")
+            pronto["email"] = email
+
+    data_ref = item.get("dataReferencia", "")
+    if data_ref:
+        try:
+            datetime.strptime(str(data_ref), "%Y-%m-%d")
+            pronto["dataReferencia"] = str(data_ref)
+        except ValueError:
+            erros.append(f"Linha {numero_linha}: 'dataReferencia' deve estar no formato yyyy-MM-dd (veio {data_ref!r}).")
+
+    ident = item.get("identificacoesAdicionais") or []
+    erros += _valida_identificacoes_adicionais(ident, numero_linha)
+    pronto["identificacoesAdicionais"] = ident
+
+    if not erros:
+        resultado.item_pronto = pronto
+    return resultado
+
+
+def gerar_lotes_envio_oe(itens: list[dict], progress_cb=None) -> tuple[list[list[dict]], list[ItemEnvio]]:
+    """Igual a gerar_lotes_envio(), mas usando as regras do Operador
+    Estrangeiro."""
+    resultados: list[ItemEnvio] = []
+    total = len(itens)
+    for i, item in enumerate(itens):
+        resultados.append(validar_e_preparar_item_envio_oe(item, numero_linha=i + 2))
+        if progress_cb and total:
+            progress_cb((i + 1) / total)
+
+    validos = [r for r in resultados if r.item_pronto is not None]
+    lotes: list[list[dict]] = []
+    for inicio in range(0, len(validos), MAX_ITENS_POR_LOTE):
+        bloco = validos[inicio: inicio + MAX_ITENS_POR_LOTE]
+        lote = [{"seq": novo_seq, **r.item_pronto} for novo_seq, r in enumerate(bloco, start=1)]
+        lotes.append(lote)
+
+    return lotes, resultados
+
+
+# ---------------------------------------------------------------------------
+# Catálogo "Vínculos de Fabricante/Produtor a Produto" — mesmo mecanismo
+# de conversão/lotes, adaptado ao schema oficial desse endpoint.
+# ---------------------------------------------------------------------------
+
+COLUNAS_SIMPLES_VINC = [
+    "seq",
+    "cpfCnpjRaiz",
+    "codigoOperadorEstrangeiro",
+    "cpfCnpjFabricante",
+    "conhecido",
+    "codigoProduto",
+    "vincular",
+    "dataReferencia",
+    "codigoPais",
+]
+TODAS_COLUNAS_VINC = COLUNAS_SIMPLES_VINC
+
+CAMPOS_OMITIVEIS_SE_VAZIOS_VINC = {
+    "codigoOperadorEstrangeiro", "cpfCnpjFabricante", "codigoProduto", "dataReferencia",
+}
+CAMPOS_BOOLEANOS_VINC = ["conhecido", "vincular"]
+
+LIMITES_TAMANHO_VINC = {
+    "codigoOperadorEstrangeiro": 35,
+    "codigoProduto": 10,
+}
+
+
+def _bool_para_texto(valor) -> str:
+    return "True" if bool(valor) else "False"
+
+
+def _texto_para_bool(valor, default: bool = False) -> bool:
+    if valor is None:
+        return default
+    texto = str(valor).strip().lower()
+    if texto in ("", "nan", "none"):
+        return default
+    return texto in ("true", "1", "sim", "verdadeiro", "yes")
+
+
+def json_para_dataframe_vinc(itens: list[dict], progress_cb=None) -> ResultadoConversao:
+    """Igual a json_para_dataframe(), mas para o schema de Vínculos de
+    Fabricante/Produtor a Produto. 'conhecido' e 'vincular' viram texto
+    True/False na planilha, para edição fácil."""
+    resultado = ResultadoConversao()
+    linhas = []
+    total = len(itens)
+
+    for i, item in enumerate(itens):
+        if not isinstance(item, dict):
+            resultado.avisos.append(f"Item na posição {i} ignorado: não é um objeto JSON válido.")
+            continue
+
+        linha = {c: _valor_ou_vazio(item, c) for c in COLUNAS_SIMPLES_VINC}
+        for campo in CAMPOS_BOOLEANOS_VINC:
+            linha[campo] = _bool_para_texto(item.get(campo, False))
+        linhas.append(linha)
+
+        if progress_cb and total:
+            progress_cb((i + 1) / total)
+
+    resultado.dataframe = pd.DataFrame(linhas, columns=TODAS_COLUNAS_VINC)
+    resultado.total_itens = len(linhas)
+    return resultado
+
+
+def dataframe_para_json_vinc(df: pd.DataFrame, progress_cb=None) -> tuple[list[dict], list[str], list[str]]:
+    """Igual a dataframe_para_json(), mas para o schema de Vínculos de
+    Fabricante/Produtor a Produto."""
+    avisos: list[str] = []
+    erros: list[str] = []
+    itens: list[dict] = []
+    total = len(df)
+
+    faltando = [c for c in TODAS_COLUNAS_VINC if c not in df.columns]
+    if faltando:
+        avisos.append(
+            "Colunas ausentes na planilha (serão omitidas/consideradas vazias): "
+            + ", ".join(faltando)
+        )
+
+    for i, row in enumerate(df.itertuples(index=False), start=0):
+        row_dict = dict(zip(df.columns, row))
+        item: dict[str, Any] = {}
+
+        for campo in COLUNAS_SIMPLES_VINC:
+            valor = row_dict.get(campo, "")
+            if pd.isna(valor):
+                valor = "" if campo != "seq" else None
+            if campo == "seq":
+                try:
+                    valor = int(valor) if valor not in ("", None) else None
+                except (ValueError, TypeError):
+                    erros.append(f"Linha {i + 2}: valor inválido em 'seq' -> {valor!r}")
+            if campo == "codigoProduto":
+                try:
+                    valor = int(valor) if valor not in ("", None) else valor
+                except (ValueError, TypeError):
+                    pass  # mantém como veio
+            if campo in CAMPOS_BOOLEANOS_VINC:
+                valor = _texto_para_bool(valor, default=False)
+            if campo in CAMPOS_OMITIVEIS_SE_VAZIOS_VINC and valor in ("", None):
+                continue
+            item[campo] = valor
+
+        itens.append(item)
+
+        if progress_cb and total:
+            progress_cb((i + 1) / total)
+
+    return itens, avisos, erros
+
+
+def validar_e_preparar_item_envio_vinc(item: dict, numero_linha: int) -> ItemEnvio:
+    """Valida um item de Vínculo de Fabricante/Produtor contra o schema
+    oficial e monta o dicionário pronto para envio."""
+    resultado = ItemEnvio(numero_linha=numero_linha, seq_original=item.get("seq"), item_pronto=None)
+    erros, avisos = resultado.erros, resultado.avisos
+    pronto: dict[str, Any] = {}
+
+    if item.get("seq") in (None, ""):
+        erros.append(f"Linha {numero_linha}: 'seq' ausente.")
+
+    cpf_cnpj = re.sub(r"\D", "", str(item.get("cpfCnpjRaiz", "")))
+    if len(cpf_cnpj) not in (8, 11) and cpf_cnpj:
+        if len(cpf_cnpj) < 8:
+            avisos.append(
+                f"Linha {numero_linha}: 'cpfCnpjRaiz' tinha {len(cpf_cnpj)} dígito(s) "
+                f"(provável perda de zero à esquerda) — completado para 8 dígitos."
+            )
+            cpf_cnpj = cpf_cnpj.zfill(8)
+        else:
+            erros.append(f"Linha {numero_linha}: 'cpfCnpjRaiz' deve ter 8 ou 11 dígitos (tem {len(cpf_cnpj)}).")
+    if not cpf_cnpj:
+        erros.append(f"Linha {numero_linha}: 'cpfCnpjRaiz' ausente.")
+    else:
+        pronto["cpfCnpjRaiz"] = cpf_cnpj
+
+    cod_oe = str(item.get("codigoOperadorEstrangeiro", "")).strip()
+    if cod_oe:
+        if len(cod_oe) > LIMITES_TAMANHO_VINC["codigoOperadorEstrangeiro"]:
+            erros.append(f"Linha {numero_linha}: 'codigoOperadorEstrangeiro' excede {LIMITES_TAMANHO_VINC['codigoOperadorEstrangeiro']} caracteres.")
+        else:
+            pronto["codigoOperadorEstrangeiro"] = cod_oe
+
+    cnpj_fab = re.sub(r"\D", "", str(item.get("cpfCnpjFabricante", "")))
+    if cnpj_fab:
+        if len(cnpj_fab) not in (11, 14):
+            erros.append(f"Linha {numero_linha}: 'cpfCnpjFabricante' deve ter 11 ou 14 dígitos (tem {len(cnpj_fab)}).")
+        else:
+            pronto["cpfCnpjFabricante"] = cnpj_fab
+
+    pronto["conhecido"] = _texto_para_bool(item.get("conhecido"), default=False)
+
+    cod_produto = item.get("codigoProduto", "")
+    if cod_produto not in ("", None):
+        try:
+            cod_produto_int = int(cod_produto)
+            if not (0 <= cod_produto_int < 10 ** LIMITES_TAMANHO_VINC["codigoProduto"]):
+                erros.append(f"Linha {numero_linha}: 'codigoProduto' excede {LIMITES_TAMANHO_VINC['codigoProduto']} dígitos.")
+            else:
+                pronto["codigoProduto"] = cod_produto_int
+        except (ValueError, TypeError):
+            erros.append(f"Linha {numero_linha}: 'codigoProduto' não é numérico -> {cod_produto!r}.")
+
+    vincular = _texto_para_bool(item.get("vincular"), default=False)
+    pronto["vincular"] = vincular
+
+    data_ref = item.get("dataReferencia", "")
+    if data_ref:
+        try:
+            datetime.strptime(str(data_ref), "%Y-%m-%d")
+            if not vincular:
+                avisos.append(
+                    f"Linha {numero_linha}: 'dataReferencia' informada com 'vincular' = False — "
+                    "não é possível desvincular retroativamente; o campo será enviado mesmo assim."
+                )
+            pronto["dataReferencia"] = str(data_ref)
+        except ValueError:
+            erros.append(f"Linha {numero_linha}: 'dataReferencia' deve estar no formato yyyy-MM-dd (veio {data_ref!r}).")
+
+    pais = str(item.get("codigoPais", "")).strip().upper()
+    if len(pais) != 2:
+        erros.append(f"Linha {numero_linha}: 'codigoPais' deve ter exatamente 2 caracteres (veio {item.get('codigoPais')!r}).")
+    pronto["codigoPais"] = pais
+
+    if not erros:
+        resultado.item_pronto = pronto
+    return resultado
+
+
+def gerar_lotes_envio_vinc(itens: list[dict], progress_cb=None) -> tuple[list[list[dict]], list[ItemEnvio]]:
+    """Igual a gerar_lotes_envio(), mas usando as regras de Vínculos de
+    Fabricante/Produtor a Produto."""
+    resultados: list[ItemEnvio] = []
+    total = len(itens)
+    for i, item in enumerate(itens):
+        resultados.append(validar_e_preparar_item_envio_vinc(item, numero_linha=i + 2))
+        if progress_cb and total:
+            progress_cb((i + 1) / total)
+
+    validos = [r for r in resultados if r.item_pronto is not None]
+    lotes: list[list[dict]] = []
+    for inicio in range(0, len(validos), MAX_ITENS_POR_LOTE):
+        bloco = validos[inicio: inicio + MAX_ITENS_POR_LOTE]
+        lote = [{"seq": novo_seq, **r.item_pronto} for novo_seq, r in enumerate(bloco, start=1)]
+        lotes.append(lote)
+
+    return lotes, resultados
+
+
+# ---------------------------------------------------------------------------
 # Interface Streamlit
 # ---------------------------------------------------------------------------
 
-def cabecalho():
-    st.title("🌐 Catálogo de Itens Siscomex — Conversor JSON ⇄ Excel")
-    st.caption(
-        "Converta o catálogo de itens do Portal Único de Comércio Exterior "
-        "entre JSON e Excel para edição em massa. Suporta milhares de itens."
-    )
+def cabecalho_siscomex(titulo: str, subtitulo: str):
+    st.title(titulo)
+    st.caption(subtitulo)
 
 
-def aba_json_para_excel():
+def botao_voltar_siscomex():
+    """Volta para a tela de escolha de catálogo do SISCOMEX (sem sair do módulo)."""
+    if st.button("↩️ Voltar ao SISCOMEX", key="btn_voltar_siscomex"):
+        if "catalogo" in st.query_params:
+            del st.query_params["catalogo"]
+        st.rerun()
+
+
+def aba_json_para_excel(titulo_catalogo: str, func_conversao, func_excel, nome_prefixo: str,
+                         key_suffix: str, info_extra: str = ""):
     st.subheader("JSON → Excel")
     st.write(
-        "Envie o arquivo JSON exportado do Catálogo de Itens do Siscomex "
-        "(lista de objetos com `seq`, `codigo`, `descricao`, `ncm`, etc.) "
+        f"Envie o arquivo JSON exportado do **{titulo_catalogo}** "
         "para gerar uma planilha editável."
     )
 
-    arquivo = st.file_uploader("Arquivo JSON do catálogo", type=["json"], key="upload_json")
+    arquivo = st.file_uploader("Arquivo JSON", type=["json"], key=f"upload_json_{key_suffix}")
 
     if arquivo is None:
         return
@@ -2010,7 +2524,7 @@ def aba_json_para_excel():
     st.success(f"{len(itens):,} item(ns) encontrado(s) no arquivo.".replace(",", "."))
 
     progresso = st.progress(0.0, text="Processando itens...")
-    resultado = json_para_dataframe(itens, progress_cb=lambda p: progresso.progress(p, text=f"Processando itens... {int(p*100)}%"))
+    resultado = func_conversao(itens, progress_cb=lambda p: progresso.progress(p, text=f"Processando itens... {int(p*100)}%"))
     progresso.empty()
 
     if resultado.avisos:
@@ -2022,34 +2536,30 @@ def aba_json_para_excel():
     st.dataframe(resultado.dataframe.head(50), use_container_width=True, height=350)
 
     with st.spinner("Gerando planilha Excel..."):
-        excel_bytes = dataframe_para_excel_bytes(resultado.dataframe)
+        excel_bytes = func_excel(resultado.dataframe)
 
-    nome_saida = f"catalogo_siscomex_{datetime.now():%Y%m%d_%H%M%S}.xlsx"
+    nome_saida = f"{nome_prefixo}_{datetime.now():%Y%m%d_%H%M%S}.xlsx"
     st.download_button(
         "⬇️ Baixar Excel",
         data=excel_bytes,
         file_name=nome_saida,
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         type="primary",
+        key=f"dl_excel_{key_suffix}",
     )
 
-    st.info(
-        "As colunas **atributos**, **atributosMultivalorados**, "
-        "**atributosCompostos** e **atributosCompostosMultivalorados** "
-        "contêm o JSON original de cada campo, para permitir reconstrução "
-        "exata ao reimportar. Edite com cuidado — texto inválido nessas "
-        "colunas será reportado como erro na conversão de volta."
-    )
+    if info_extra:
+        st.info(info_extra)
 
 
-def aba_excel_para_json():
-    st.subheader("Excel → JSON (formato Catálogo Siscomex)")
+def aba_excel_para_json(titulo_catalogo: str, func_conversao, nome_prefixo: str, key_suffix: str):
+    st.subheader(f"Excel → JSON (formato {titulo_catalogo})")
     st.write(
         "Envie uma planilha no formato gerado por este app (ou compatível) "
-        "para reconstruir o JSON no padrão do Catálogo de Itens do Siscomex."
+        f"para reconstruir o JSON no padrão do {titulo_catalogo}."
     )
 
-    arquivo = st.file_uploader("Arquivo Excel (.xlsx)", type=["xlsx"], key="upload_excel")
+    arquivo = st.file_uploader("Arquivo Excel (.xlsx)", type=["xlsx"], key=f"upload_excel_{key_suffix}")
 
     if arquivo is None:
         return
@@ -2064,7 +2574,7 @@ def aba_excel_para_json():
     st.success(f"{len(df):,} linha(s) lida(s) da planilha.".replace(",", "."))
 
     progresso = st.progress(0.0, text="Reconstruindo itens...")
-    itens, avisos, erros = dataframe_para_json(
+    itens, avisos, erros = func_conversao(
         df, progress_cb=lambda p: progresso.progress(p, text=f"Reconstruindo itens... {int(p*100)}%")
     )
     progresso.empty()
@@ -2081,7 +2591,7 @@ def aba_excel_para_json():
             if len(erros) > 200:
                 st.write(f"... e mais {len(erros) - 200} erro(s).")
         st.warning(
-            "Itens com erro de JSON nas colunas de atributos foram exportados "
+            "Itens com erro de JSON em colunas de lista/JSON foram exportados "
             "com essa lista vazia ([]). Corrija a planilha e reprocesse se necessário."
         )
 
@@ -2089,44 +2599,32 @@ def aba_excel_para_json():
     st.json(itens[:3] if itens else [], expanded=False)
 
     saida = json_bytes(itens)
-    nome_saida = f"catalogo_siscomex_{datetime.now():%Y%m%d_%H%M%S}.json"
+    nome_saida = f"{nome_prefixo}_{datetime.now():%Y%m%d_%H%M%S}.json"
     st.download_button(
         "⬇️ Baixar JSON",
         data=saida,
         file_name=nome_saida,
         mime="application/json",
         type="primary",
+        key=f"dl_json_{key_suffix}",
     )
 
     st.caption(f"Tamanho do arquivo gerado: {len(saida) / 1024:.1f} KB — {len(itens):,} item(ns).".replace(",", "."))
 
 
-def aba_lotes_envio():
+def aba_lotes_envio(titulo_catalogo: str, func_conversao, func_lotes, nome_prefixo: str,
+                     key_suffix: str, notas_md: str):
     st.subheader("Lotes para envio/retificação na API do Siscomex")
     st.write(
         "Envie uma planilha (mesmo layout gerado por este app) para validar "
-        "cada item contra as regras oficiais da API de importação de "
-        "produtos e gerar os arquivos JSON já divididos em lotes de até "
-        f"**{MAX_ITENS_POR_LOTE} itens** (limite da API). Itens com erro "
-        "são listados no relatório e excluídos dos lotes."
+        f"cada item do **{titulo_catalogo}** contra as regras oficiais e gerar "
+        f"os arquivos JSON já divididos em lotes de até **{MAX_ITENS_POR_LOTE} itens** "
+        "(limite da API). Itens com erro são listados no relatório e excluídos dos lotes."
     )
     with st.expander("O que muda em relação ao 'Excel → JSON' simples"):
-        st.markdown(
-            "- `situacao` e `modalidade` são normalizadas para maiúsculas.\n"
-            "- `cpfCnpjRaiz` e `ncm` são completados com zeros à esquerda "
-            "se vierem com dígitos a menos (comum quando o Excel remove "
-            "zeros de células numéricas).\n"
-            "- `seq` é renumerado de 1 a 100 **dentro de cada lote** — a "
-            "API só exige que seja único por requisição.\n"
-            "- `inicioVigencia` (campo só de leitura) é removido; "
-            "`dataReferencia` (campo só de escrita, opcional) é mantido "
-            "se preenchido.\n"
-            "- Tamanhos de campo (`descricao` ≤ 3700, `denominacao` 1-120, "
-            "`atributo` ≤ 25, `valor` ≤ 100, código interno ≤ 60, etc.) "
-            "são validados um a um."
-        )
+        st.markdown(notas_md)
 
-    arquivo = st.file_uploader("Arquivo Excel (.xlsx)", type=["xlsx"], key="upload_excel_lotes")
+    arquivo = st.file_uploader("Arquivo Excel (.xlsx)", type=["xlsx"], key=f"upload_excel_lotes_{key_suffix}")
     if arquivo is None:
         return
 
@@ -2140,7 +2638,7 @@ def aba_lotes_envio():
     st.success(f"{len(df):,} linha(s) lida(s) da planilha.".replace(",", "."))
 
     progresso1 = st.progress(0.0, text="Reconstruindo itens...")
-    itens, avisos_leitura, erros_leitura = dataframe_para_json(
+    itens, avisos_leitura, erros_leitura = func_conversao(
         df, progress_cb=lambda p: progresso1.progress(p, text=f"Reconstruindo itens... {int(p*100)}%")
     )
     progresso1.empty()
@@ -2151,7 +2649,7 @@ def aba_lotes_envio():
                 st.write("- " + e)
 
     progresso2 = st.progress(0.0, text="Validando contra as regras da API...")
-    lotes, resultados = gerar_lotes_envio(
+    lotes, resultados = func_lotes(
         itens, progress_cb=lambda p: progresso2.progress(p, text=f"Validando... {int(p*100)}%")
     )
     progresso2.empty()
@@ -2184,21 +2682,22 @@ def aba_lotes_envio():
         st.warning("Nenhum item válido — nenhum lote foi gerado.")
         return
 
-    st.write(f"**Pré-visualização** (primeiros itens do lote 1, formato de envio):")
+    st.write("**Pré-visualização** (primeiros itens do lote 1, formato de envio):")
     st.json(lotes[0][:3], expanded=False)
 
     zip_bytes = gerar_zip_lotes(lotes, relatorio)
-    nome_zip = f"lotes_siscomex_{datetime.now():%Y%m%d_%H%M%S}.zip"
+    nome_zip = f"lotes_{nome_prefixo}_{datetime.now():%Y%m%d_%H%M%S}.zip"
     st.download_button(
         f"⬇️ Baixar ZIP com {len(lotes)} lote(s) + relatório",
         data=zip_bytes,
         file_name=nome_zip,
         mime="application/zip",
         type="primary",
+        key=f"dl_zip_{key_suffix}",
     )
 
 
-def barra_lateral():
+def barra_lateral_produtos():
     with st.sidebar:
         st.header("Sobre")
         st.write(
@@ -2234,19 +2733,235 @@ def barra_lateral():
         st.caption("Processa milhares de itens em memória (sem gravar em disco).")
 
 
-def modulo_siscomex():
-    botao_voltar()
-    barra_lateral()
-    cabecalho()
+def barra_lateral_oe():
+    with st.sidebar:
+        st.header("Sobre")
+        st.write(
+            "Ferramenta interna para conversão em massa do **Operador "
+            "Estrangeiro** do Siscomex entre JSON e Excel."
+        )
+        st.markdown("---")
+        st.markdown(
+            "**Campos escalares:**\n"
+            "seq, cpfCnpjRaiz, codigo, versao, tin, nome, situacao, "
+            "logradouro, nomeCidade, codigoSubdivisaoPais, codigoPais, "
+            "cep, codigoInterno, email, dataReferencia"
+        )
+        st.caption(
+            "`codigo` e `versao` são atribuídos pelo Siscomex na criação "
+            "(campos só de retorno) — deixe em branco ao cadastrar um "
+            "operador novo."
+        )
+        st.markdown(
+            "**Lista complexa (JSON cru na célula):** identificacoesAdicionais "
+            "(pares `numero`/`codigo` de identificação em agências internacionais)"
+        )
+        st.markdown("---")
+        st.caption("Processa milhares de itens em memória (sem gravar em disco).")
+
+
+def barra_lateral_vinc():
+    with st.sidebar:
+        st.header("Sobre")
+        st.write(
+            "Ferramenta interna para conversão em massa de **Vínculos de "
+            "Fabricante/Produtor a Produto** do Siscomex entre JSON e Excel."
+        )
+        st.markdown("---")
+        st.markdown(
+            "**Campos escalares:**\n"
+            "seq, cpfCnpjRaiz, codigoOperadorEstrangeiro, cpfCnpjFabricante, "
+            "conhecido, codigoProduto, vincular, dataReferencia, codigoPais"
+        )
+        st.caption(
+            "`conhecido` e `vincular` são booleanos (True/False na planilha). "
+            "`vincular = True` cria/atualiza o vínculo; `vincular = False` "
+            "desvincula o fabricante/produtor existente (não é possível "
+            "desvincular retroativamente)."
+        )
+        st.markdown("---")
+        st.caption("Processa milhares de itens em memória (sem gravar em disco).")
+
+
+NOTAS_LOTES_PRODUTOS = (
+    "- `situacao` e `modalidade` são normalizadas para maiúsculas.\n"
+    "- `cpfCnpjRaiz` e `ncm` são completados com zeros à esquerda "
+    "se vierem com dígitos a menos (comum quando o Excel remove "
+    "zeros de células numéricas).\n"
+    "- `seq` é renumerado de 1 a 100 **dentro de cada lote** — a "
+    "API só exige que seja único por requisição.\n"
+    "- `inicioVigencia` (campo só de leitura) é removido; "
+    "`dataReferencia` (campo só de escrita, opcional) é mantido "
+    "se preenchido.\n"
+    "- Tamanhos de campo (`descricao` ≤ 3700, `denominacao` 1-120, "
+    "`atributo` ≤ 25, `valor` ≤ 100, código interno ≤ 60, etc.) "
+    "são validados um a um."
+)
+
+NOTAS_LOTES_OE = (
+    "- `codigoPais` e `codigoSubdivisaoPais` são normalizados para maiúsculas.\n"
+    "- `cpfCnpjRaiz` é completado com zeros à esquerda se vier com dígitos "
+    "a menos.\n"
+    "- `seq` é renumerado de 1 a 100 **dentro de cada lote**.\n"
+    "- `codigo` e `versao` (campos só de retorno) são omitidos do envio "
+    "quando vierem vazios, em vez de gerar erro — use vazio para cadastrar "
+    "um operador novo.\n"
+    "- Tamanhos de campo (`nome` 1-150, `logradouro` 1-70, `nomeCidade` "
+    "1-35, `tin`/`codigo`/`codigoInterno` ≤ 35, `email` ≤ 70, etc.) são "
+    "validados um a um."
+)
+
+NOTAS_LOTES_VINC = (
+    "- `codigoPais` é normalizado para maiúsculas.\n"
+    "- `cpfCnpjRaiz` é completado com zeros à esquerda se vier com dígitos "
+    "a menos.\n"
+    "- `seq` é renumerado de 1 a 100 **dentro de cada lote**.\n"
+    "- `conhecido` e `vincular` aceitam texto True/False (ou 1/0, sim/não) "
+    "e são convertidos para booleano; quando ausentes, assumem `False`.\n"
+    "- `codigoOperadorEstrangeiro`, `cpfCnpjFabricante`, `codigoProduto` e "
+    "`dataReferencia` são opcionais e omitidos do envio quando vazios."
+)
+
+
+def modulo_siscomex_produtos():
+    botao_voltar_siscomex()
+    cabecalho_siscomex(
+        "📦 Catálogo de Produtos — Conversor JSON ⇄ Excel",
+        "Converta o catálogo de itens do Portal Único de Comércio Exterior "
+        "entre JSON e Excel para edição em massa. Suporta milhares de itens.",
+    )
     tab1, tab2, tab3 = st.tabs(
         ["📤 JSON → Excel", "📥 Excel → JSON", "📦 Lotes para envio (API)"]
     )
     with tab1:
-        aba_json_para_excel()
+        aba_json_para_excel(
+            "Catálogo de Itens do Siscomex", json_para_dataframe, dataframe_para_excel_bytes,
+            "catalogo_produtos", "produtos",
+            info_extra=(
+                "As colunas **atributos**, **atributosMultivalorados**, "
+                "**atributosCompostos** e **atributosCompostosMultivalorados** "
+                "contêm o JSON original de cada campo, para permitir reconstrução "
+                "exata ao reimportar. Edite com cuidado — texto inválido nessas "
+                "colunas será reportado como erro na conversão de volta."
+            ),
+        )
     with tab2:
-        aba_excel_para_json()
+        aba_excel_para_json("Catálogo de Produtos", dataframe_para_json, "catalogo_produtos", "produtos")
     with tab3:
-        aba_lotes_envio()
+        aba_lotes_envio(
+            "Catálogo de Produtos", dataframe_para_json, gerar_lotes_envio,
+            "catalogo_produtos", "produtos", NOTAS_LOTES_PRODUTOS,
+        )
+    barra_lateral_produtos()
+
+
+def modulo_siscomex_operador_estrangeiro():
+    botao_voltar_siscomex()
+    cabecalho_siscomex(
+        "🌎 Operador Estrangeiro — Conversor JSON ⇄ Excel",
+        "Converta o cadastro de Operador Estrangeiro do Siscomex entre JSON "
+        "e Excel para edição em massa e envio/retificação em lotes.",
+    )
+    tab1, tab2, tab3 = st.tabs(
+        ["📤 JSON → Excel", "📥 Excel → JSON", "📦 Lotes para envio (API)"]
+    )
+    with tab1:
+        aba_json_para_excel(
+            "Operador Estrangeiro", json_para_dataframe_oe,
+            lambda df: dataframe_para_excel_bytes(df, colunas_lista_json=COLUNAS_LISTA_JSON_OE),
+            "operador_estrangeiro", "oe",
+            info_extra=(
+                "A coluna **identificacoesAdicionais** contém o JSON original "
+                "(pares `numero`/`codigo`) para permitir reconstrução exata ao "
+                "reimportar."
+            ),
+        )
+    with tab2:
+        aba_excel_para_json("Operador Estrangeiro", dataframe_para_json_oe, "operador_estrangeiro", "oe")
+    with tab3:
+        aba_lotes_envio(
+            "Operador Estrangeiro", dataframe_para_json_oe, gerar_lotes_envio_oe,
+            "operador_estrangeiro", "oe", NOTAS_LOTES_OE,
+        )
+    barra_lateral_oe()
+
+
+def modulo_siscomex_vinculos():
+    botao_voltar_siscomex()
+    cabecalho_siscomex(
+        "🔗 Vínculos de Fabricante/Produtor a Produto — Conversor JSON ⇄ Excel",
+        "Converta o vínculo de fabricante/produtor a produto do Siscomex "
+        "entre JSON e Excel para edição em massa e envio/retificação em lotes.",
+    )
+    tab1, tab2, tab3 = st.tabs(
+        ["📤 JSON → Excel", "📥 Excel → JSON", "📦 Lotes para envio (API)"]
+    )
+    with tab1:
+        aba_json_para_excel(
+            "Vínculos de Fabricante/Produtor a Produto", json_para_dataframe_vinc,
+            lambda df: dataframe_para_excel_bytes(df, colunas_lista_json=[]),
+            "vinculos_fabricante_produtor", "vinc",
+            info_extra=(
+                "`conhecido` e `vincular` são booleanos (True/False). "
+                "`vincular = False` desvincula o fabricante/produtor existente."
+            ),
+        )
+    with tab2:
+        aba_excel_para_json(
+            "Vínculos de Fabricante/Produtor a Produto", dataframe_para_json_vinc,
+            "vinculos_fabricante_produtor", "vinc",
+        )
+    with tab3:
+        aba_lotes_envio(
+            "Vínculos de Fabricante/Produtor a Produto", dataframe_para_json_vinc, gerar_lotes_envio_vinc,
+            "vinculos_fabricante_produtor", "vinc", NOTAS_LOTES_VINC,
+        )
+    barra_lateral_vinc()
+
+
+def pagina_siscomex_home():
+    botao_voltar()
+    ph("""
+    <div class="ph-hdr">
+        <span class="ph-icon">🌐</span>
+        <div>
+            <div class="ph-title">SISCOMEX</div>
+            <div class="ph-sub">Conversores JSON ⇄ Excel para os catálogos do Portal Único de Comércio Exterior</div>
+        </div>
+    </div>
+    """)
+    ph("""
+    <div class="home-grid">
+        <a href="?modulo=siscomex&catalogo=produtos" class="home-card">
+            <span class="icon">📦</span>
+            <div class="name">Catálogo de Produtos</div>
+            <div class="desc">Itens do catálogo — JSON ⇄ Excel e lotes para envio</div>
+        </a>
+        <a href="?modulo=siscomex&catalogo=operador_estrangeiro" class="home-card">
+            <span class="icon">🌎</span>
+            <div class="name">Operador Estrangeiro</div>
+            <div class="desc">Cadastro de operadores estrangeiros — JSON ⇄ Excel e lotes para envio</div>
+        </a>
+        <a href="?modulo=siscomex&catalogo=vinculos" class="home-card">
+            <span class="icon">🔗</span>
+            <div class="name">Vínculos Fabricante/Produtor</div>
+            <div class="desc">Vínculo de fabricante/produtor a produto — JSON ⇄ Excel e lotes para envio</div>
+        </a>
+    </div>
+    """)
+
+
+def modulo_siscomex():
+    catalogo = st.query_params.get("catalogo", None)
+
+    if catalogo == "produtos":
+        modulo_siscomex_produtos()
+    elif catalogo == "operador_estrangeiro":
+        modulo_siscomex_operador_estrangeiro()
+    elif catalogo == "vinculos":
+        modulo_siscomex_vinculos()
+    else:
+        pagina_siscomex_home()
 
 
 # ==============================================================================
